@@ -506,7 +506,7 @@ class helmpy:
 
             output_data.append(output_list)
 
-            # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time - filename contains time elapsed in years
+            # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time
             if len(timesteps_snapshot) != 0:
                 if any(count_steps == tts for tts in timesteps_snapshot):
 

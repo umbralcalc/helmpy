@@ -1,2 +1,2 @@
 # helmpy
-An all-in-one python class for forecasting the effect of mass drug administration on helminth (parasitic worm) disease transmission with an optimised stochastic simulation
+An all-in-one python class for forecasting the effects of, e.g., mass drug administration, infected human migration and systematic individual non-compliance to treatment on helminth (parasitic worm) disease transmission for a wide range of population sizes. The code runs with an optimised stochastic simulation method where best results can be attained through only a minimal (typically ~10, depending on the overall population number) number of repeat runs.
