@@ -103,13 +103,14 @@ class helmpy:
     
 
     # Implements a Gillespie algorithm (https://en.wikipedia.org/wiki/Gillespie_algorithm) of the system, running a full stochastic simulation
-    # while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region and outputting to file
+    # while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region and outputting to file
     def run_full_stoch(self,
                        runtime,                    # Set the total time of the run in years
                        realisations,               # Set the number of stochastic realisations for the model
                        do_nothing_timescale,       # Set a timescale (in years) short enough such that an individual is expected to stay in the same state
                        output_filename,            # Set a filename for the data to be output in self.output_directory
                        timesteps_snapshot=[],      # Optional - output a snapshot of the worm burdens in each cluster after a specified number of steps in time 
+                       res_process_output=False,   # Optional - output the mean and 68 credible region of the infectious reservoir
                        mf_migrations=False,        # Optional - use mean field egg count distribution to compute reservoir amplitudes while updating the ensemble mean worm burden
                        mf_migrations_fixed=False   # Optional - set to True if eus migration pulses are drawn from egg count distributions with parameters fixed to the initial conditions
                                                    #          - set to False (default) if eus migration pulses are drawn from egg count distributions with their ensemble means updated 
@@ -304,14 +305,24 @@ class helmpy:
 
         count_steps = 0
         output_data = []
+
+        if res_process_output == True: output_res_data = []
+
         time = 0.0 # Initialise time and loop over drawn timestep
         while time < runtime:
 
-            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower confidence limits in the mean worm burden per cluster
+            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower credible limits in the mean worm burden per cluster
             ensM_perclus_output = []
             ensV_perclus_output = [] 
             ensup68CL_perclus_output = []
             enslw68CL_perclus_output = []
+
+            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower credible limits in the infectious reservoir per cluster, if specified
+            if res_process_output == True:
+                ensMres_perclus_output = []
+                ensVres_perclus_output = [] 
+                ensup68CLres_perclus_output = []
+                enslw68CLres_perclus_output = []
    
             # If treatment has been specified, initialise snapshot output lists of the ensemble mean and ensemble variance in the mean worm 
             # burden per cluster where the realisations which have been lost to the m(t) = 0 attractor post-treatment have been removed
@@ -472,7 +483,7 @@ class helmpy:
                     # Reduce the loop size by one 
                     reduce_loop += 1
 
-                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster 
+                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 credible region in the mean worm burden per cluster 
                 ensemble_of_m_perclus = np.sum(ws_ind_perclus[i].astype(float)/float(np.sum(Nps[spis==uspis[i]])),axis=0)
                 ensM_perclus = np.sum(ensemble_of_m_perclus)/float(realisations)
                 ensV_perclus = np.sum((ensemble_of_m_perclus-ensM_perclus)**2.0)/float(realisations)
@@ -481,6 +492,16 @@ class helmpy:
                 ensV_perclus_output += [ensV_perclus]
                 ensup68CL_perclus_output += [ensup68CL_perclus]
                 enslw68CL_perclus_output += [enslw68CL_perclus]
+
+                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 credible region in the reservoir of infection per cluster, if specified
+                if res_process_output == True:
+                    ensMres_perclus = np.sum(totFOI_clus)/float(realisations)
+                    ensVres_perclus = np.sum((totFOI_clus-ensMres_perclus)**2.0)/float(realisations)
+                    [ensup68CLres_perclus,enslw68CLres_perclus] = np.percentile(totFOI_clus,[84,16])
+                    ensMres_perclus_output += [ensMres_perclus]
+                    ensVres_perclus_output += [ensVres_perclus]
+                    ensup68CLres_perclus_output += [ensup68CLres_perclus]
+                    enslw68CLres_perclus_output += [enslw68CLres_perclus]
 
                 # If migration has been specified, update the age-binned ensemble mean worm burdens
                 if self.migration_mode == True:
@@ -498,15 +519,21 @@ class helmpy:
                 # If migration has been specified, include egg pulses into the reservoir at the end of the integration step and reset the pulses
                 if self.migration_mode == True: FOIs_ind_perclus[i] += eggpulse_ind_perclus[i]
         
-            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
+            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
+
+            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 
+            # 68 credible region in the reservoir of infection per cluster in a list, if specified
+            if res_process_output == True:
+                output_res_list = [time] + ensMres_perclus_output + ensVres_perclus_output + ensup68CLres_perclus_output + enslw68CLres_perclus_output
+                output_res_data.append(output_res_list)
             
             # If treatment has been specified, add the ensemble mean and ensemble variance with the m(t) = 0 realisations removed per cluster to the output list
             if self.treatment_times is not None: output_list += ensM_zeros_removed_perclus_output + ensV_zeros_removed_perclus_output
 
             output_data.append(output_list)
 
-            # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time
+            # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time - filename contains time elapsed in years
             if len(timesteps_snapshot) != 0:
                 if any(count_steps == tts for tts in timesteps_snapshot):
 
@@ -540,6 +567,10 @@ class helmpy:
 
         # Output the data to a tab-delimited .txt file in the specified output directory  
         np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
+
+        # Output the infectious reservoir data to a tab-delimited .txt file in the specified output directory, if specified
+        if res_process_output == True:
+            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
 
 
     # Define the mean-field worm sampler - draws stationary realisations of individual worm burdens from a cluster, stacked in age bins to match 
@@ -764,7 +795,7 @@ class helmpy:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
 
 
-    # Run the mean-field stochastic model while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region and outputting to file
+    # Run the mean-field stochastic model while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region and outputting to file
     def run_meanfield_stoch(self,
                             runtime,                    # Set the total time of the run in years
                             realisations,               # Set the number of stochastic realisations for the model
@@ -953,7 +984,7 @@ class helmpy:
                 # Count the number of steps performed in time
                 count_steps += 1
 
-                # Compute the normalised ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region
+                # Compute the normalised ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region
                 # in the mean worm burden per cluster using the Langevin realisations
                 meanwb_reals_perclus = [(np.sum(Nps[spis==uspis[spii]]*mwb_walker_nd[:,spis==uspis[spii]].astype(float),axis=1))/ \
                                          np.sum(Nps[spis==uspis[spii]].astype(float)) for spii in range(0,len(uspis))]
@@ -962,7 +993,7 @@ class helmpy:
                 ensup68CL_perclus_output = [np.percentile(meanwb_reals_perclus[spii],84) for spii in range(0,len(uspis))]
                 enslw68CL_perclus_output = [np.percentile(meanwb_reals_perclus[spii],16) for spii in range(0,len(uspis))]
 
-                # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
+                # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region in the mean worm burden per cluster in a list
                 output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
                 output_data.append(output_list)
 
