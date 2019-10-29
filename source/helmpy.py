@@ -557,13 +557,13 @@ class helmpy:
 
                 # Output the data to tab-delimited .txt files in the specified output directory
                 np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_lasttreat_prevalences_cluster_' + \
-                           str(spis[i]) + '.txt',treat_prevs_perclus[i],delimiter='\t')
+                           str(uspis[i]) + '.txt',treat_prevs_perclus[i],delimiter='\t')
 
         # Output the final treatment realisations in each cluster
         for i in range(0,len(uspis)):   
             # Output the data to a tab-delimited .txt file in the specified output directory 
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_final_prevalences_cluster_' + \
-                           str(spis[i]) + '.txt',np.sum((ws_ind_perclus[i]>0),axis=0).astype(float)/float(np.sum(Nps[spis==uspis[i]])),delimiter='\t')
+                           str(uspis[i]) + '.txt',np.sum((ws_ind_perclus[i]>0),axis=0).astype(float)/float(np.sum(Nps[spis==uspis[i]])),delimiter='\t')
 
         # Output the data to a tab-delimited .txt file in the specified output directory  
         np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
