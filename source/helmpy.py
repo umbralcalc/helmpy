@@ -17,6 +17,7 @@ class helmpy:
         self.add_treatment_prog
         self.run_full_stoch
         self.run_meanfield
+        self.disarrange
         self.worm_STH_stationary_sampler
         self.egg_STH_pulse_sampler
         self.treatment_times = None
@@ -45,7 +46,10 @@ class helmpy:
                                                    'spi':  [1],             # Spatial index number of grouping - modify this only if varying spatially in clusters
                                                    'r+':   [0.0],           # Migration i x i matrix - the migration rate in from each of the i clusters (per year) 
                                                    'r-':   [0.0],           # Migration i x i matrix - the migration rate out to each of the i clusters (per year) 
-                                                   'Nm':   [1]              # Migrant number per event (global parameter) - must be integer!!!
+                                                   'Nm':   [1],             # Migrant number per event (global parameter) - must be integer - default is 1
+                                                   'brat': [],              # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
+                                                   'Na':   [1],             # Number of people ageing per event (global parameter) - must be integer - default is 1
+                                                   'ari':  [0]              # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
                                                  }
             # Default is one grouping with the same initial conditions in cluster '1'
             self.default_initial_conditions = {
@@ -65,7 +69,8 @@ class helmpy:
         # If the number of people are set in new groupings then create lists of equivalent size with default values for all parameters and initial conditions
         # which are not explictly set from the beginning - this essentially means that the number of people parameter is the most important to set initially
         for key in self.parameter_dictionary:
-            if (len(self.parameter_dictionary[key]) != len(self.parameter_dictionary['Np'])) and (key != 'r+') and (key != 'r-') and (key != 'Nm'):
+            if (len(self.parameter_dictionary[key]) != len(self.parameter_dictionary['Np'])) and (key != 'r+') and (key != 'r-') \
+                                                                                             and (key != 'Nm') and (key != 'brat') and (key != 'Na'):
 
                 # Multiply lists by number of new groupings
                 self.parameter_dictionary[key] = self.parameter_dictionary[key]*len(self.parameter_dictionary['Np'])
@@ -102,15 +107,28 @@ class helmpy:
         if compliance_params is not None: self.compliance_params = np.asarray(compliance_params)
     
 
+    # Need this function to find ordering of people within each cluster to implement ageing
+    # Function from https://github.com/numpy/numpy/issues/5173 shuffles `a` in-place along the given axis
+    # Applys numpy.random.shuffle to the given axis of `a` and each one-dimensional slice is shuffled independently
+    def disarrange(self, a, axis=-1):
+    
+        b = a.swapaxes(axis, -1)
+        # Shuffle `b` in-place along the last axis.  `b` is a view of `a`
+        # so `a` is shuffled in place too
+        shp = b.shape[:-1]
+        for ndx in np.ndindex(shp):
+            np.random.shuffle(b[ndx])
+        return
+
+
     # Implements a Gillespie algorithm (https://en.wikipedia.org/wiki/Gillespie_algorithm) of the system, running a full stochastic simulation
-    # while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region and outputting to file
+    # while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region and outputting to file
     def run_full_stoch(self,
                        runtime,                    # Set the total time of the run in years
                        realisations,               # Set the number of stochastic realisations for the model
                        do_nothing_timescale,       # Set a timescale (in years) short enough such that an individual is expected to stay in the same state
                        output_filename,            # Set a filename for the data to be output in self.output_directory
                        timesteps_snapshot=[],      # Optional - output a snapshot of the worm burdens in each cluster after a specified number of steps in time 
-                       res_process_output=False,   # Optional - output the mean and 68 credible region of the infectious reservoir
                        mf_migrations=False,        # Optional - use mean field egg count distribution to compute reservoir amplitudes while updating the ensemble mean worm burden
                        mf_migrations_fixed=False   # Optional - set to True if eus migration pulses are drawn from egg count distributions with parameters fixed to the initial conditions
                                                    #          - set to False (default) if eus migration pulses are drawn from egg count distributions with their ensemble means updated 
@@ -138,6 +156,10 @@ class helmpy:
             Ms = np.asarray(self.initial_conditions['M'])
             FOIs = np.asarray(self.initial_conditions['FOI'])
 
+            # If ageing has been specified then set birth rates and age ordering of groups according to indices given - if not then default is no ageing
+            brats = np.asarray(self.parameter_dictionary['brat'])
+            aris = np.asarray(self.parameter_dictionary['ari'])
+
             # Check to see if inter-cluster migration has been specified
             if rps.any() != 0.0 or rms.any() != 0.0: self.migration_mode = True 
 
@@ -146,6 +168,13 @@ class helmpy:
 
             # Obtain the number of clusters
             numclus = len(uspis)
+
+            # Check to see if ageing has been specified
+            if len(brats) > 0:
+                
+                # Set the maximum value of the age index in each grouping
+                maxaris = np.ones_like(brats).astype(int)
+                for i in range(0,len(uspis)): maxaris[i] = np.max(aris[spis==uspis[i]])
 
             lam_ind_perclus = []
             ws_ind_perclus = []
@@ -158,6 +187,13 @@ class helmpy:
             ks_ind_perclus = []
             gams_ind_perclus = []
             Nps_ind_perclus = []
+
+            # Check to see if ageing has been specified then set storage
+            if len(brats) > 0: 
+                aris_ind_perclus = [] 
+                Num_per_ageing_event = self.parameter_dictionary['Na'][0]
+                age_number_reals_perclus_peragegroup = [[np.zeros(realisations) for j in range(0,maxaris[i]+1)] for i in range(0,len(uspis))]
+                age_order_ind_perclus_peragegroup = [[np.empty((0,realisations),float) for j in range(0,maxaris[i]+1)] for i in range(0,len(uspis))]
 
             # Function which maps from worms to eggs in the standard migration model
             def worm_to_egg_func(wormvals,gamvals):
@@ -190,6 +226,9 @@ class helmpy:
                 ks_ind_clus = np.empty((0,realisations),float)
                 gams_ind_clus = np.empty((0,realisations),float)
                 Nps_ind_clus = np.empty((0,realisations),float)
+
+                # Check to see if ageing has been specified then set storage
+                if len(brats) > 0: aris_ind_clus = np.empty((0,realisations),float)
   
                 # If treatment has been specified, allocate memory
                 if self.treatment_times is not None: 
@@ -241,6 +280,9 @@ class helmpy:
                     gams_ind_clus = np.append(gams_ind_clus,gams[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
                     Nps_ind_clus = np.append(Nps_ind_clus,Nps[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
 
+                    # Check to see if ageing has been specified then set storage
+                    if len(brats) > 0: aris_ind_clus = np.append(aris_ind_clus,aris[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
+
                     # If treatment has been specified, give a coverage fraction for each individual to draw from
                     if self.treatment_times is not None: 
                         if self.treatment_coverages is not None: cov_ind_clus = np.append(cov_ind_clus,np.tensordot(self.treatment_coverages[spis==uspis[i]][j], \
@@ -268,6 +310,9 @@ class helmpy:
                 gams_ind_perclus.append(gams_ind_clus)
                 Nps_ind_perclus.append(Nps_ind_clus)
 
+                # Check to see if ageing has been specified then append list
+                if len(brats) > 0: aris_ind_perclus.append(aris_ind_clus)
+
                 # If treatment has been specified, append lists
                 if self.treatment_times is not None: 
                     if self.treatment_coverages is not None: 
@@ -278,6 +323,33 @@ class helmpy:
 
                 # If migration has been specified, allocate memory for reservoir pulses
                 if self.migration_mode == True: eggpulse_ind_perclus.append(eggpulse_ind_clus)
+
+        # Check to see if ageing has been specified then if so, generate an age-ordering array structure
+        if len(brats) > 0:
+            # Loop over age groups per cluster
+            for i in range(0,len(uspis)):
+
+                # Compute the number of people in the infant age group of the cluster
+                num_per_age_group_in_clus = np.sum(Nps[spis==uspis[i]][aris[spis==uspis[i]]==0])
+
+                # Generate age indices for each realisation and randomly scramble them once only
+                age_indices = np.tensordot(np.arange(0,num_per_age_group_in_clus,1),np.ones(realisations),axes=0)
+                self.disarrange(age_indices,axis=0)
+
+                # Store the scrambled indices to the infant age group per cluster 
+                age_order_ind_perclus_peragegroup[i][0] = np.append(age_order_ind_perclus_peragegroup[i][0],age_indices,axis=0) 
+
+                for j in range(1,maxaris[i]+1):
+                    
+                    # Compute the number of people in the j-th age group of the cluster
+                    num_per_age_group_in_clus = np.sum(Nps[spis==uspis[i]][aris[spis==uspis[i]]==j])
+
+                    # Generate age indices for each realisation and randomly scramble them once only
+                    age_indices = np.tensordot(np.arange(0,num_per_age_group_in_clus,1),np.ones(realisations),axes=0)
+                    self.disarrange(age_indices,axis=0)
+
+                    # Store the scrambled indices to the j-th age group per cluster 
+                    age_order_ind_perclus_peragegroup[i][j] = np.append(age_order_ind_perclus_peragegroup[i][j],age_indices,axis=0) 
       
         if self.suppress_terminal_output == False: 
 
@@ -288,6 +360,10 @@ class helmpy:
 
              if self.migration_mode == True:
                  print('Inter-cluster migration has been enabled...')
+                 print('                                           ')
+
+             if len(brats) > 0:
+                 print('Ageing has been enabled...')
                  print('                                           ')
 
              if self.treatment_times is not None: 
@@ -305,24 +381,14 @@ class helmpy:
 
         count_steps = 0
         output_data = []
-
-        if res_process_output == True: output_res_data = []
-
         time = 0.0 # Initialise time and loop over drawn timestep
         while time < runtime:
 
-            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower credible limits in the mean worm burden per cluster
+            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower confidence limits in the mean worm burden per cluster
             ensM_perclus_output = []
             ensV_perclus_output = [] 
             ensup68CL_perclus_output = []
             enslw68CL_perclus_output = []
-
-            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower credible limits in the infectious reservoir per cluster, if specified
-            if res_process_output == True:
-                ensMres_perclus_output = []
-                ensVres_perclus_output = [] 
-                ensup68CLres_perclus_output = []
-                enslw68CLres_perclus_output = []
    
             # If treatment has been specified, initialise snapshot output lists of the ensemble mean and ensemble variance in the mean worm 
             # burden per cluster where the realisations which have been lost to the m(t) = 0 attractor post-treatment have been removed
@@ -356,7 +422,70 @@ class helmpy:
             # In later updates this could potentially become another array index to sum over for greater efficiency: 
             # the problem would be unequal numbers of people between clusters...
             for i in range(0,len(uspis)):
-        
+
+                # Check to see if ageing has been specified then age individuals according to birth rate
+                if len(brats) > 0: 
+
+                    # Compute the number of people in the infant age group of the cluster
+                    num_per_age_group_in_clus = np.sum(Nps[spis==uspis[i]][aris[spis==uspis[i]]==0])
+
+                    # Generate random birth individuals in the first age group of each cluster by evolving the age index number 
+                    # and using realisations of ageing according to the birth rate in each cluster
+                    ageing_realisations = (np.random.uniform(size=realisations) < brats[i]/(brats[i] + (1.0/do_nothing_timescale)))
+                    age_number_reals_perclus_peragegroup[i][0] += Num_per_ageing_event*(ageing_realisations == True)
+
+                    # When age number overruns the number of people in an age group then cycle back around to first number again
+                    overrun_age_number = (age_number_reals_perclus_peragegroup[i][0]>=num_per_age_group_in_clus)
+                    age_number_reals_perclus_peragegroup[i][0][overrun_age_number] = age_number_reals_perclus_peragegroup[i][0][overrun_age_number] - \
+                                                                                     num_per_age_group_in_clus
+
+                    # Store the worm burdens of those ageing out of the infants group to transfer them to those in the age group above
+                    wbs_next_agegroup = np.zeros_like(ws_ind_perclus[i][aris_ind_perclus[i]==0])
+                    wbs_next_agegroup = ws_ind_perclus[i][aris_ind_perclus[i]==0]
+
+                    # Age the infants first by setting the worm burdens of those individuals who age to 0
+                    is_ageing = np.ndarray.flatten(np.tensordot(np.ones(num_per_age_group_in_clus),ageing_realisations,axes=0)==True)
+                    overrun_age_number_reals = np.ndarray.flatten(np.tensordot(np.ones(num_per_age_group_in_clus),overrun_age_number,axes=0)==True)
+                    is_above = np.ndarray.flatten(age_order_ind_perclus_peragegroup[i][0]>=age_number_reals_perclus_peragegroup[i][0])
+                    is_below = np.ndarray.flatten((age_order_ind_perclus_peragegroup[i][0]<age_number_reals_perclus_peragegroup[i][0]-\
+                                                  Num_per_ageing_event))*(overrun_age_number_reals==False) + \
+                               np.ndarray.flatten((age_order_ind_perclus_peragegroup[i][0]<age_number_reals_perclus_peragegroup[i][0]+\
+                                                  num_per_age_group_in_clus-Num_per_ageing_event))*(overrun_age_number_reals==True)
+                    ws_ind_perclus[i][aris_ind_perclus[i]==0] = ws_ind_perclus[i][aris_ind_perclus[i]==0]*(is_ageing==False) + \
+                                                                ws_ind_perclus[i][aris_ind_perclus[i]==0]*(is_ageing)*((is_above)+(is_below))*(overrun_age_number_reals==False) + \
+                                                                ws_ind_perclus[i][aris_ind_perclus[i]==0]*(is_ageing)*(is_above)*(is_below)*(overrun_age_number_reals==True) 
+
+                    # If more age groups exist in the cluster then cascade the ageing up all groups successively with the same ageing method
+                    for j in range(1,maxaris[i]+1):
+
+                        # Compute the number of people in the j-th age group of the cluster
+                        num_per_age_group_in_clus = np.sum(Nps[spis==uspis[i]][aris[spis==uspis[i]]==j])
+
+                        # Evolve the age index number in the age group of those realisations which are ageing 
+                        age_number_reals_perclus_peragegroup[i][j] += Num_per_ageing_event*(ageing_realisations == True)
+
+                        # When age number overruns the number of people in an age group then cycle back around to first number again
+                        overrun_age_number = (age_number_reals_perclus_peragegroup[i][j]>=num_per_age_group_in_clus)
+                        age_number_reals_perclus_peragegroup[i][j][overrun_age_number] = age_number_reals_perclus_peragegroup[i][j][overrun_age_number] - \
+                                                                                         num_per_age_group_in_clus
+
+                        # Set those ageing out to worm burdens of those ageing in from the lower age group
+                        is_above = np.ndarray.flatten(age_order_ind_perclus_peragegroup[i][j]>=age_number_reals_perclus_peragegroup[i][j])
+                        overrun_age_number_reals = np.ndarray.flatten(np.tensordot(np.ones(num_per_age_group_in_clus),overrun_age_number,axes=0)==True)
+                        is_below = np.ndarray.flatten((age_order_ind_perclus_peragegroup[i][j]<age_number_reals_perclus_peragegroup[i][j]-\
+                                                      Num_per_ageing_event))*(overrun_age_number_reals==False) + \
+                                   np.ndarray.flatten((age_order_ind_perclus_peragegroup[i][j]<age_number_reals_perclus_peragegroup[i][j]+\
+                                                      num_per_age_group_in_clus-Num_per_ageing_event))*(overrun_age_number_reals==True)
+                        ws_ind_perclus[i][aris_ind_perclus[i]==j] = ws_ind_perclus[i][aris_ind_perclus[i]==j]*(is_ageing==False) + \
+                                                                    ws_ind_perclus[i][aris_ind_perclus[i]==j]*(is_ageing)*((is_above)+(is_below))*(overrun_age_number_reals==False) + \
+                                                                    ws_ind_perclus[i][aris_ind_perclus[i]==j]*(is_ageing)*(is_above)*(is_below)*(overrun_age_number_reals==True) + \
+                                                                    wbs_next_agegroup*(is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)
+                                                                    
+
+                        # Store worm burdens of those ageing up from lower group
+                        wbs_next_agegroup = np.zeros_like(ws_ind_perclus[i][aris_ind_perclus[i]==j])
+                        wbs_next_agegroup = ws_ind_perclus[i][aris_ind_perclus[i]==j]   
+
                 # If treatment has been specified, apply coverage fraction to individuals within a cluster (removing their worms completely)
                 if self.treatment_times is not None:
                     if any(treat_ind) == True:
@@ -483,7 +612,7 @@ class helmpy:
                     # Reduce the loop size by one 
                     reduce_loop += 1
 
-                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 credible region in the mean worm burden per cluster 
+                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster 
                 ensemble_of_m_perclus = np.sum(ws_ind_perclus[i].astype(float)/float(np.sum(Nps[spis==uspis[i]])),axis=0)
                 ensM_perclus = np.sum(ensemble_of_m_perclus)/float(realisations)
                 ensV_perclus = np.sum((ensemble_of_m_perclus-ensM_perclus)**2.0)/float(realisations)
@@ -492,16 +621,6 @@ class helmpy:
                 ensV_perclus_output += [ensV_perclus]
                 ensup68CL_perclus_output += [ensup68CL_perclus]
                 enslw68CL_perclus_output += [enslw68CL_perclus]
-
-                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 credible region in the reservoir of infection per cluster, if specified
-                if res_process_output == True:
-                    ensMres_perclus = np.sum(totFOI_clus)/float(realisations)
-                    ensVres_perclus = np.sum((totFOI_clus-ensMres_perclus)**2.0)/float(realisations)
-                    [ensup68CLres_perclus,enslw68CLres_perclus] = np.percentile(totFOI_clus,[84,16])
-                    ensMres_perclus_output += [ensMres_perclus]
-                    ensVres_perclus_output += [ensVres_perclus]
-                    ensup68CLres_perclus_output += [ensup68CLres_perclus]
-                    enslw68CLres_perclus_output += [enslw68CLres_perclus]
 
                 # If migration has been specified, update the age-binned ensemble mean worm burdens
                 if self.migration_mode == True:
@@ -519,14 +638,8 @@ class helmpy:
                 # If migration has been specified, include egg pulses into the reservoir at the end of the integration step and reset the pulses
                 if self.migration_mode == True: FOIs_ind_perclus[i] += eggpulse_ind_perclus[i]
         
-            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region in the mean worm burden per cluster in a list
+            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
-
-            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 
-            # 68 credible region in the reservoir of infection per cluster in a list, if specified
-            if res_process_output == True:
-                output_res_list = [time] + ensMres_perclus_output + ensVres_perclus_output + ensup68CLres_perclus_output + enslw68CLres_perclus_output
-                output_res_data.append(output_res_list)
             
             # If treatment has been specified, add the ensemble mean and ensemble variance with the m(t) = 0 realisations removed per cluster to the output list
             if self.treatment_times is not None: output_list += ensM_zeros_removed_perclus_output + ensV_zeros_removed_perclus_output
@@ -567,10 +680,6 @@ class helmpy:
 
         # Output the data to a tab-delimited .txt file in the specified output directory  
         np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
-
-        # Output the infectious reservoir data to a tab-delimited .txt file in the specified output directory, if specified
-        if res_process_output == True:
-            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
 
 
     # Define the mean-field worm sampler - draws stationary realisations of individual worm burdens from a cluster, stacked in age bins to match 
@@ -795,7 +904,7 @@ class helmpy:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
 
 
-    # Run the mean-field stochastic model while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region and outputting to file
+    # Run the mean-field stochastic model while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region and outputting to file
     def run_meanfield_stoch(self,
                             runtime,                    # Set the total time of the run in years
                             realisations,               # Set the number of stochastic realisations for the model
@@ -984,7 +1093,7 @@ class helmpy:
                 # Count the number of steps performed in time
                 count_steps += 1
 
-                # Compute the normalised ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region
+                # Compute the normalised ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region
                 # in the mean worm burden per cluster using the Langevin realisations
                 meanwb_reals_perclus = [(np.sum(Nps[spis==uspis[spii]]*mwb_walker_nd[:,spis==uspis[spii]].astype(float),axis=1))/ \
                                          np.sum(Nps[spis==uspis[spii]].astype(float)) for spii in range(0,len(uspis))]
@@ -993,7 +1102,7 @@ class helmpy:
                 ensup68CL_perclus_output = [np.percentile(meanwb_reals_perclus[spii],84) for spii in range(0,len(uspis))]
                 enslw68CL_perclus_output = [np.percentile(meanwb_reals_perclus[spii],16) for spii in range(0,len(uspis))]
 
-                # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 credible region in the mean worm burden per cluster in a list
+                # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
                 output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
                 output_data.append(output_list)
 
