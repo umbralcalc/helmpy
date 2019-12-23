@@ -478,6 +478,7 @@ class helmpy:
                                                       num_per_age_group_in_clus-Num_per_ageing_event))*(overrun_age_number_reals==True)
                         ws_ind_perclus[i][aris_ind_perclus[i]==j] = ws_ind_perclus[i][aris_ind_perclus[i]==j]*(is_ageing==False) + \
                                                                     ws_ind_perclus[i][aris_ind_perclus[i]==j]*(is_ageing)*((is_above)+(is_below))*(overrun_age_number_reals==False) + \
+                                                                    wbs_next_agegroup*(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
                                                                     ws_ind_perclus[i][aris_ind_perclus[i]==j]*(is_ageing)*(is_above)*(is_below)*(overrun_age_number_reals==True) + \
                                                                     wbs_next_agegroup*(is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)
                                                                     
