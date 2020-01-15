@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import scipy.special as spec
 import emcee as mc
 import corner
-import elfi
 
 
 # Initialize the 'helmpy' method class
@@ -26,11 +25,11 @@ class helmpy:
         self.disarrange
         self.worm_STH_stationary_sampler
         self.egg_STH_pulse_sampler
+        self.fit_egg_counts
         self.treatment_times = None
         self.treatment_coverages = None
         self.compliance_params = None
         self.migration_mode = False
-        self.posterior_sampler_mode = False
         self.suppress_terminal_output = suppress_terminal_output
         self.drug_efficacy = 1.0
 
@@ -43,31 +42,40 @@ class helmpy:
         if self.helm_type == 'STH':
             # Default is one grouping with the same parameters in cluster '1'
             self.default_parameter_dictionary = {
-                                                   'mu':   [1.0/70.0],      # Human death rate (per year)
-                                                   'mu1':  [0.5],           # Adult worm death rate (per year)
-                                                   'mu2':  [26.0],          # Reservoir (eggs and larvae) death rate (per year)
-                                                   'R0':   [2.5],           # Basic reproduction number within grouping
-                                                   'k':    [0.3],           # Inverse-clumping factor within grouping
-                                                   'gam':  [0.08],          # Density dependent fecundity power-law scaling z = exp(-gam)
-                                                   'Np':   [100],           # Number of people within grouping
-                                                   'spi':  [1],             # Spatial index number of grouping - modify this only if varying spatially in clusters
-                                                   'r+':   [0.0],           # Migration i x i matrix - the migration rate in from each of the i clusters (per year) 
-                                                   'r-':   [0.0],           # Migration i x i matrix - the migration rate out to each of the i clusters (per year) 
-                                                   'Nm':   [1],             # Migrant number per event (global parameter) - must be integer - default is 1
-                                                   'brat': [],              # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
-                                                   'Na':   [1],             # Number of people ageing per event (global parameter) - must be integer - default is 1
-                                                   'ari':  [0]              # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
+                                                   'mu':     [1.0/70.0],      # Human death rate (per year)
+                                                   'mu1':    [0.5],           # Adult worm death rate (per year)
+                                                   'mu2':    [26.0],          # Reservoir (eggs and larvae) death rate (per year)
+                                                   'R0':     [2.5],           # Basic reproduction number within grouping
+                                                   'k':      [0.3],           # Inverse-clumping factor within grouping
+                                                   'gam':    [0.08],          # Density dependent fecundity power-law scaling z = exp(-gam)
+                                                   'Np':     [100],           # Number of people within grouping
+                                                   'spi':    [1],             # Spatial index number of grouping - modify this only if varying spatially in clusters
+                                                   'r+':     [0.0],           # Migration i x i matrix - the migration rate in from each of the i clusters (per year) 
+                                                   'r-':     [0.0],           # Migration i x i matrix - the migration rate out to each of the i clusters (per year) 
+                                                   'Nm':     [1],             # Migrant number per event (global parameter) - must be integer - default is 1
+                                                   'brat':   [],              # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
+                                                   'Na':     [1],             # Number of people ageing per event (global parameter) - must be integer - default is 1
+                                                   'ari':    [0],             # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
                                                  }
             # Default is one grouping with the same initial conditions in cluster '1'
             self.default_initial_conditions = {
                                                  'M':          [2.6],      # Initial mean total worm burden within grouping
                                                  'FOI':        [1.25],     # Initial force of infection (per year) within grouping
-                                                 'wormlist':   [],         # Optional initialisation of the separate worm burdens of individuals in each grouping in a list of lists 
-                                                 'lamlist':    []          # Optional initialisation of the separate uptake rates of individuals in each grouping in a list of lists 
+                                                 'wormlist':   [],         # Optional initialisation of the separate worm burdens of individuals in each grouping in a list of length Np lists
+                                                 'lamlist':    [],         # Optional initialisation of the separate uptake rates of individuals in each grouping in a list of length Np lists  
                                                }
+            # Default is to avoid using posterior samples
+            self.default_posterior_samples = {
+                                                 'Msamps':    [],    # Optional initialisation with posterior M samples in each grouping in a list of lists of length number of realisations
+                                                 'FOIsamps':  [],    # Optional initialisation with posterior FOI samples in each grouping in a list of lists of length number of realisations
+                                                 'ksamps':    [],    # Optional initialisation with posterior k samples in each grouping in a list of lists of length number of realisations
+                                                 'R0samps':   [],    # Optional initialisation with posterior R0 samples in each grouping in a list of lists of length number of realisations 
+                                                 'gamsamps':  []     # Optional initialisation with posterior gam samples in each grouping in a list of lists of length number of realisations
+                                              }
 
         self.parameter_dictionary = self.default_parameter_dictionary
-        self.initial_conditions = self.default_initial_conditions 
+        self.initial_conditions = self.default_initial_conditions
+        self.posterior_samples = self.default_posterior_samples 
 
 
     # If new groupings have been added to parameters or initial conditions, fix the dimensions to match in all keys of the dictionary where not specified
@@ -135,14 +143,12 @@ class helmpy:
                        realisations,               # Set the number of stochastic realisations for the model
                        do_nothing_timescale,       # Set a timescale (in years) short enough such that an individual is expected to stay in the same state
                        output_filename,            # Set a filename for the data to be output in self.output_directory
-                       timesteps_snapshot=[],      # Optional - output a snapshot of the worm burdens in each cluster after a specified number of steps in time 
+                       timesteps_snapshot=[],      # Optional - output a snapshot of the worm burdens in each cluster after a specified number of steps in time
+                       res_process_output=False,   # Optional - output the mean and 68 credible region of the infectious reservoir
                        mf_migrations=False,        # Optional - use mean field egg count distribution to compute reservoir amplitudes while updating the ensemble mean worm burden
                        mf_migrations_fixed=False   # Optional - set to True if eus migration pulses are drawn from egg count distributions with parameters fixed to the initial conditions
                                                    #          - set to False (default) if eus migration pulses are drawn from egg count distributions with their ensemble means updated
                        ):
-
-        # If the posterior sampler mode has been activated then avoid printing out all simulation runs and reruns
-        if self.posterior_sampler_mode == True: self.suppress_terminal_output = True
 
         # Terminal front page when code runs...
         if self.suppress_terminal_output == False: self.helmpy_frontpage()
@@ -188,13 +194,11 @@ class helmpy:
 
             lam_ind_perclus = []
             ws_ind_perclus = []
-            Ms_ind_perclus = []
             FOIs_ind_perclus = []
             R0s_ind_perclus = []
             mus_ind_perclus = []
             mu1s_ind_perclus = []
             mu2s_ind_perclus = []
-            ks_ind_perclus = []
             gams_ind_perclus = []
             Nps_ind_perclus = []
 
@@ -227,13 +231,11 @@ class helmpy:
                 
                 lams_ind_clus = np.empty((0,realisations),float)
                 ws_ind_clus = np.empty((0,realisations),float)
-                Ms_ind_clus = np.empty((0,realisations),float)
                 FOIs_ind_clus = np.empty((0,realisations),float)
                 R0s_ind_clus = np.empty((0,realisations),float)
                 mus_ind_clus = np.empty((0,realisations),float)
                 mu1s_ind_clus = np.empty((0,realisations),float)
                 mu2s_ind_clus = np.empty((0,realisations),float)
-                ks_ind_clus = np.empty((0,realisations),float)
                 gams_ind_clus = np.empty((0,realisations),float)
                 Nps_ind_clus = np.empty((0,realisations),float)
 
@@ -255,39 +257,78 @@ class helmpy:
                 # Loop over groupings and stack the arrays
                 for j in range(0,len(Nps[spis==uspis[i]])):
                 
-                    # If list of individual uptake rates has not been specified, draw values from the initial gamma distribution with k
-                    if len(self.initial_conditions['lamlist']) == 0:
+                    # If list of individual uptake rates or posterior samples for k have not been specified, draw values from the initial gamma distribution with k
+                    if len(self.initial_conditions['lamlist']) == 0 and len(self.posterior_samples['ksamps']) == 0:
                         # Draw from lambda ~ Gamma(k,k) for each individual and realisation of pickup rate 
                         # The values in each age bin are also sorted in order to match worm burdens for optimised approach to stationarity
                         lams_ind_clus = np.append(lams_ind_clus,np.sort(np.random.gamma(ks[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)), \
                                                                        (1.0/ks[spis==uspis[i]][j])*np.ones((Nps[spis==uspis[i]][j],realisations)), \
                                                                         size=(Nps[spis==uspis[i]][j],realisations)),axis=0),axis=0)
 
+                    # If list of posterior samples for k have been specified, set realisations
+                    if len(self.initial_conditions['lamlist']) == 0 and len(self.posterior_samples['ksamps']) > 0:
+                        # Draw from lambda ~ Gamma(k,k) for each individual and posterior k realisation of pickup rate 
+                        # The values in each age bin are also sorted in order to match worm burdens for optimised approach to stationarity
+                        lams_ind_clus = np.append(lams_ind_clus,np.sort(np.random.gamma(np.tensordot(np.ones(Nps[spis==uspis[i]][j]), \
+                                                                        np.asarray(self.posterior_samples['ksamps'])[spis==uspis[i]][j],axes=0), \
+                                                                        1.0/np.tensordot(np.ones(Nps[spis==uspis[i]][j]), \
+                                                                        np.asarray(self.posterior_samples['ksamps'])[spis==uspis[i]][j],axes=0), \
+                                                                        size=(Nps[spis==uspis[i]][j],realisations)),axis=0),axis=0)
+
                     # If list of individual uptake rates has been specified, set the values in each grouping and create the matrix of realisations
-                    if len(self.initial_conditions['lamlist']) > 0: 
+                    if len(self.initial_conditions['lamlist']) > 0 and len(self.posterior_samples['ksamps']) == 0: 
                         lams_ind_clus = np.append(lams_ind_clus,np.tensordot(np.asarray(self.initial_conditions['lamlist'])[spis==uspis[i]][j],np.ones(realisations),axes=0),axis=0)
 
-                    # If list of individual worm burdens has not been specified, draw values from the initial M
-                    if len(self.initial_conditions['wormlist']) == 0:
+                    # If list of individual worm burdens or posterior samples for M have not been specified, draw values from the initial M
+                    if len(self.initial_conditions['wormlist']) == 0 and len(self.posterior_samples['Msamps']) == 0:
                         # Draw an individual's worm burden realisations from a negative binomial with initial conditions set
                         # The values in each age bin are also sorted in order to match pickup rates for optimised approach to stationarity
                         ws_ind_clus = np.append(ws_ind_clus,np.sort(np.random.negative_binomial(ks[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)), \
                                                                    ((1.0+(Ms[spis==uspis[i]][j]/ks[spis==uspis[i]][j]))**(-1.0))*np.ones((Nps[spis==uspis[i]][j],realisations)), \
                                                                     size=(Nps[spis==uspis[i]][j],realisations)),axis=0),axis=0)
 
+                    # If list of posterior samples for M have been specified, set realisations
+                    if len(self.initial_conditions['wormlist']) == 0 and len(self.posterior_samples['Msamps']) > 0:
+                        # Draw an individual's worm burden realisations using posterior samples of M from a negative binomial with initial conditions set
+                        # The values in each age bin are also sorted in order to match pickup rates for optimised approach to stationarity
+                        ws_ind_clus = np.append(ws_ind_clus,np.sort(np.random.negative_binomial(np.tensordot(np.ones(Nps[spis==uspis[i]][j]), \
+                                                            np.asarray(self.posterior_samples['ksamps'])[spis==uspis[i]][j],axes=0), \
+                                                            ((1.0+(np.tensordot(np.ones(Nps[spis==uspis[i]][j]),np.asarray(self.posterior_samples['Msamps'])[spis==uspis[i]][j],axes=0)/ \
+                                                            np.tensordot(np.ones(Nps[spis==uspis[i]][j]),np.asarray(self.posterior_samples['ksamps'])[spis==uspis[i]][j],axes=0)))**(-1.0)), \
+                                                            size=(Nps[spis==uspis[i]][j],realisations)),axis=0),axis=0)
+
                     # If list of individual worm burdens has been specified, set the values in each grouping and create the matrix of realisations
-                    if len(self.initial_conditions['wormlist']) > 0: 
+                    if len(self.initial_conditions['wormlist']) > 0 and len(self.posterior_samples['Msamps']) == 0: 
                         ws_ind_clus = np.append(ws_ind_clus,np.tensordot(np.asarray(self.initial_conditions['wormlist'])[spis==uspis[i]][j],np.ones(realisations),axes=0),axis=0)
 
-                    # Set initial mean worm burden, force of infection, R0, human death rate, worm death rate and eggs/larvae death rate for each individual and realisation
-                    Ms_ind_clus = np.append(Ms_ind_clus,Ms[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
-                    FOIs_ind_clus = np.append(FOIs_ind_clus,FOIs[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
-                    R0s_ind_clus = np.append(R0s_ind_clus,R0s[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
+                    # If posterior samples for FOI have not been specified, then set the FOI initial conditions as usual
+                    if len(self.posterior_samples['FOIsamps']) == 0:
+                        FOIs_ind_clus = np.append(FOIs_ind_clus,FOIs[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
+                    
+                    # If posterior samples for FOI have been specified, then set the values for each realisation
+                    if len(self.posterior_samples['FOIsamps']) > 0:
+                        FOIs_ind_clus = np.append(FOIs_ind_clus,np.tensordot(np.ones(Nps[spis==uspis[i]][j]),np.asarray(self.posterior_samples['FOIsamps'])[spis==uspis[i]][j],axes=0),axis=0)
+
+                    # If posterior samples for R0 have not been specified, then set the R0 values matrix as usual
+                    if len(self.posterior_samples['R0samps']) == 0:
+                        R0s_ind_clus = np.append(R0s_ind_clus,R0s[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
+                    
+                    # If posterior samples for R0 have been specified, then set the values for each realisation
+                    if len(self.posterior_samples['R0samps']) > 0:
+                        R0s_ind_clus = np.append(R0s_ind_clus,np.tensordot(np.ones(Nps[spis==uspis[i]][j]),np.asarray(self.posterior_samples['R0samps'])[spis==uspis[i]][j],axes=0),axis=0)
+                    
+                    # If posterior samples for gam have not been specified, then set the gam values matrix as usual
+                    if len(self.posterior_samples['gamsamps']) == 0:
+                        gams_ind_clus = np.append(gams_ind_clus,gams[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
+                    
+                    # If posterior samples for gam have been specified, then set the values for each realisation
+                    if len(self.posterior_samples['gamsamps']) > 0:
+                        gams_ind_clus = np.append(gams_ind_clus,np.tensordot(np.ones(Nps[spis==uspis[i]][j]),np.asarray(self.posterior_samples['gamsamps'])[spis==uspis[i]][j],axes=0),axis=0)
+
+                    # Set initial human death rate, worm death rate and eggs/larvae death rate for each individual and realisation
                     mus_ind_clus = np.append(mus_ind_clus,mus[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
                     mu1s_ind_clus = np.append(mu1s_ind_clus,mu1s[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
                     mu2s_ind_clus = np.append(mu2s_ind_clus,mu2s[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
-                    ks_ind_clus = np.append(ks_ind_clus,ks[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
-                    gams_ind_clus = np.append(gams_ind_clus,gams[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
                     Nps_ind_clus = np.append(Nps_ind_clus,Nps[spis==uspis[i]][j]*np.ones((Nps[spis==uspis[i]][j],realisations)),axis=0)
 
                     # Check to see if ageing has been specified then set storage
@@ -310,13 +351,11 @@ class helmpy:
                 # Append all of the cluster-by-cluster lists
                 lam_ind_perclus.append(lams_ind_clus)
                 ws_ind_perclus.append(ws_ind_clus)
-                Ms_ind_perclus.append(Ms_ind_clus)
                 FOIs_ind_perclus.append(FOIs_ind_clus)
                 R0s_ind_perclus.append(R0s_ind_clus)
                 mus_ind_perclus.append(mus_ind_clus)
                 mu1s_ind_perclus.append(mu1s_ind_clus)
                 mu2s_ind_perclus.append(mu2s_ind_clus)
-                ks_ind_perclus.append(ks_ind_clus)
                 gams_ind_perclus.append(gams_ind_clus)
                 Nps_ind_perclus.append(Nps_ind_clus)
 
@@ -391,6 +430,7 @@ class helmpy:
 
         count_steps = 0
         output_data = []
+        if res_process_output == True: output_res_data = []
         time = 0.0 # Initialise time and loop over drawn timestep
         while time < runtime:
 
@@ -399,6 +439,13 @@ class helmpy:
             ensV_perclus_output = [] 
             ensup68CL_perclus_output = []
             enslw68CL_perclus_output = []
+
+            # Initialise snapshot output lists of the ensemble mean, ensemble variance and 68% upper and lower credible limits in the infectious reservoir per cluster, if specified
+            if res_process_output == True:
+                ensMres_perclus_output = []
+                ensVres_perclus_output = [] 
+                ensup68CLres_perclus_output = []
+                enslw68CLres_perclus_output = []
    
             # If treatment has been specified, initialise snapshot output lists of the ensemble mean and ensemble variance in the mean worm 
             # burden per cluster where the realisations which have been lost to the m(t) = 0 attractor post-treatment have been removed
@@ -500,7 +547,7 @@ class helmpy:
                         # Set those ageing out to worm burdens of those ageing in from the lower age group
                         ws_ind_perclus[i][aris_ind_perclus[i]==j][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
                                                                   (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)] = wbs_next_agegroup
-                        
+
                         # Set the new lower worm burdens to those of the ageing individuals in the current age group
                         wbs_next_agegroup = store_wbs_next_agegroup
                                                                      
@@ -640,6 +687,16 @@ class helmpy:
                 ensup68CL_perclus_output += [ensup68CL_perclus]
                 enslw68CL_perclus_output += [enslw68CL_perclus]
 
+                # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 credible region in the reservoir of infection per cluster, if specified
+                if res_process_output == True:
+                    ensMres_perclus = np.sum(totFOI_clus)/float(realisations)
+                    ensVres_perclus = np.sum((totFOI_clus-ensMres_perclus)**2.0)/float(realisations)
+                    [ensup68CLres_perclus,enslw68CLres_perclus] = np.percentile(totFOI_clus,[84,16])
+                    ensMres_perclus_output += [ensMres_perclus]
+                    ensVres_perclus_output += [ensVres_perclus]
+                    ensup68CLres_perclus_output += [ensup68CLres_perclus]
+                    enslw68CLres_perclus_output += [enslw68CLres_perclus]
+
                 # If migration has been specified, update the age-binned ensemble mean worm burdens
                 if self.migration_mode == True:
                     ws_age_binned = np.split(ws_ind_perclus[i].astype(float),Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])],axis=0)
@@ -658,11 +715,15 @@ class helmpy:
         
             # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
+
+            # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the reservoir of infection per cluster in a list
+            if res_process_output == True: output_res_list = [time] + ensMres_perclus_output + ensVres_perclus_output + ensup68CLres_perclus_output + enslw68CLres_perclus_output
             
             # If treatment has been specified, add the ensemble mean and ensemble variance with the m(t) = 0 realisations removed per cluster to the output list
             if self.treatment_times is not None: output_list += ensM_zeros_removed_perclus_output + ensV_zeros_removed_perclus_output
 
             output_data.append(output_list)
+            if res_process_output == True: output_res_data.append(output_res_list)
 
             # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time - filename contains time elapsed in years
             if len(timesteps_snapshot) != 0:
@@ -698,6 +759,10 @@ class helmpy:
 
         # Output the data to a tab-delimited .txt file in the specified output directory  
         np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
+
+        # Output the infectious reservoir data to a tab-delimited .txt file in the specified output directory, if specified
+        if res_process_output == True:
+            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
 
 
     # Define the mean-field worm sampler - draws stationary realisations of individual worm burdens from a cluster, stacked in age bins to match 
@@ -1154,13 +1219,10 @@ class helmpy:
                        num_iterations=500            # Change the number of iterations used by the ensemble MC sampler - default is 500 which works fine in most cases
                        ):
 
-        # Convert to posterior sampler mode
-        self.posterior_sampler_mode = True
-
         # Terminal front page when code runs...
         if self.suppress_terminal_output == False: self.helmpy_frontpage()
 
-        if self.suppress_terminal_output == False: print('Now in posterior sampler mode...')
+        if self.suppress_terminal_output == False: print('Now generating posterior samples...')
 
         # Fix the dimensions for all of the groupings
         self.fix_groupings()
