@@ -25,7 +25,7 @@ class helmpy:
         self.disarrange
         self.worm_STH_stationary_sampler
         self.egg_STH_pulse_sampler
-        self.fit_egg_counts
+        self.fit_data
         self.treatment_times = None
         self.treatment_coverages = None
         self.compliance_params = None
@@ -37,7 +37,10 @@ class helmpy:
         self.chains_directory = 'chains/' 
         self.output_directory = 'data/'
         self.plots_directory = 'plots/'
-        self.source_directory = 'source/'     
+        self.source_directory = 'source/'  
+
+        # Possible samples from data to compare simulations to
+        self.data_samples = None   
 
         if self.helm_type == 'STH':
             # Default is one grouping with the same parameters in cluster '1'
@@ -72,10 +75,16 @@ class helmpy:
                                                  'R0samps':   [],    # Optional initialisation with posterior R0 samples in each grouping in a list of lists of length number of realisations 
                                                  'gamsamps':  []     # Optional initialisation with posterior gam samples in each grouping in a list of lists of length number of realisations
                                               }
+            # Default is that parameters are needed for simulation comparison to data
+            self.default_data_specific_parameters = {
+                                                        'KatoKatz':      [],    # Optional choice of lambda_epg (index 0 of list) for Kato-Katz egg count data 
+                                                        'qPCR':          []     # Optional choice of parameters in qPCR data
+                                                     }
 
         self.parameter_dictionary = self.default_parameter_dictionary
         self.initial_conditions = self.default_initial_conditions
         self.posterior_samples = self.default_posterior_samples 
+        self.data_specific_parameters = self.default_data_specific_parameters
 
 
     # If new groupings have been added to parameters or initial conditions, fix the dimensions to match in all keys of the dictionary where not specified
@@ -752,7 +761,8 @@ class helmpy:
                            str(uspis[i]) + '.txt',treat_prevs_perclus[i],delimiter='\t')
 
         # Output the final treatment realisations in each cluster
-        for i in range(0,numclus):   
+        for i in range(0,numclus):  
+ 
             # Output the data to a tab-delimited .txt file in the specified output directory 
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_final_prevalences_cluster_' + \
                            str(uspis[i]) + '.txt',np.sum((ws_ind_perclus[i]>0),axis=0).astype(float)/float(np.sum(Nps[spis==uspis[i]])),delimiter='\t')
@@ -763,6 +773,37 @@ class helmpy:
         # Output the infectious reservoir data to a tab-delimited .txt file in the specified output directory, if specified
         if res_process_output == True:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
+
+        # If data has been fitted to then compare each simulation run to this and output likelihood of each in a tab-delimited .txt file for each cluster
+        if self.data_samples is not None:
+            
+            # If Kato-Katz data is specified then compare using the corresponding likelihood and output results
+            if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
+                
+                # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
+                lamepg = self.data_specific_parameters['KatoKatz'][0]
+
+                # Loop over clusters
+                for i in range(0,numclus):
+
+                    # Number of groupings in the cluster
+                    numgroup = len(Nps[spis==uspis[i]])
+
+                    # Compute the simulated worm and Kato-Katz egg mean for each grouping and realisation
+                    ws_age_binned = np.split(ws_ind_perclus[i].astype(float),Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])],axis=0)
+                    gams_age_binned = np.split(gams_ind_perclus[i].astype(float),Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])],axis=0)
+                    simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+
+                    # Obtain the Kato-Katz egg mean values from the data samples
+                    dataKatoKatz_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
+
+                    # Compute the likelihood of each realisation
+                    eggmean_likelihood = np.prod(np.asarray([np.sum(np.exp(-(np.tensordot(dataKatoKatz_eggmeans[j],np.ones_like(simKatoKatz_eggmean[j]),axes=0)-\
+                                                                             np.tensordot(np.ones_like(dataKatoKatz_eggmeans[j]),simKatoKatz_eggmean[j],axes=0))**2.0),axis=0) \
+                                                                             for j in range(0,numgroup)]),axis=0)
+
+                    # Output the likelihood for each of the realisations to a tab-delimited .txt file in the specified output directory
+                    np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',eggmean_likelihood,delimiter='\t')
 
 
     # Define the mean-field worm sampler - draws stationary realisations of individual worm burdens from a cluster, stacked in age bins to match 
@@ -1207,135 +1248,143 @@ class helmpy:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
 
 
-    # Fit means and a single variance to egg count data corresponding to the same structure as the input parameter dictionary 
-    # and initial conditions and output the data to a text file using the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
-    def fit_egg_counts(self,
-                       count_data,                   # Input the count data in a list structure equivalent to the input parameter dictionary and initial conditions
-                       walker_initconds,             # Parameter initial conditions [centre,width] for the walkers in format - [[centre mean 1,width mean 1],...,[centre variance,width variance]]
-                       output_filename,              # Set a filename for the data to be output in self.output_directory
-                       output_corner_plot=True,      # Boolean for corner plot of the mean and variance posterior fits with: https://corner.readthedocs.io/en/latest/ - default is to output
-                       plot_labels=[],               # If corner plot is generated then this is an option to list a set of variable names (strings) in the same order as walker_initconds
-                       num_walkers=100,              # Change the number of walkers used by the ensemble MC sampler - default is 100 which works fine in most cases  
-                       num_iterations=500            # Change the number of iterations used by the ensemble MC sampler - default is 500 which works fine in most cases
-                       ):
+    # Fit to data corresponding to the same structure as the input parameter dictionary/initial conditions 
+    # and output the data to a text file using the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
+    def fit_data(self,
+                 data,                         # Input the data in a list structure equivalent to the input parameter dictionary and initial conditions
+                 walker_initconds,             # Parameter initial conditions [centre,width] for the walkers in format - [[centre mean 1,width mean 1],...,[centre variance,width variance]]
+                 output_filename,              # Set a filename for the data to be output in self.output_directory
+                 output_corner_plot=True,      # Boolean for corner plot of the mean and variance posterior fits with: https://corner.readthedocs.io/en/latest/ - default is to output
+                 plot_labels=[],               # If corner plot is generated then this is an option to list a set of variable names (strings) in the same order as walker_initconds
+                 num_walkers=100,              # Change the number of walkers used by the ensemble MC sampler - default is 100 which works fine in most cases  
+                 num_iterations=500            # Change the number of iterations used by the ensemble MC sampler - default is 500 which works fine in most cases
+                 ):
 
         # Terminal front page when code runs...
         if self.suppress_terminal_output == False: self.helmpy_frontpage()
 
         if self.suppress_terminal_output == False: print('Now generating posterior samples...')
 
-        # Fix the dimensions for all of the groupings
-        self.fix_groupings()
+        if self.helm_type == 'STH':
+           
+            # If Kato-Katz data is specified then perform the corresponding fitting procedure
+            if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
 
-        # Find the spatial indices to identify clusters
-        spis = np.asarray(self.parameter_dictionary['spi'])
+                # Fix the dimensions for all of the groupings
+                self.fix_groupings()
 
-        # Find the number of data components and check to see if this matches the parameter dictionary lists in number
-        numdat = len(count_data)
-        Nps = np.asarray(self.parameter_dictionary['Np'])
-        if len(Nps) != numdat: 
-            print('                              ')
-            print("ERROR! Please ensure at least the 'Np' list in the parameter dictionary matches the same number of components as the list of data...")
-            print('                              ')
+                # Find the spatial indices to identify clusters
+                spis = np.asarray(self.parameter_dictionary['spi'])
 
-        # Find unique cluster references
-        uspis = np.unique(spis)
+                # Find the number of data components and check to see if this matches the parameter dictionary lists in number
+                numdat = len(data)
+                Nps = np.asarray(self.parameter_dictionary['Np'])
+                if len(Nps) != numdat: 
+                    print('                              ')
+                    print("ERROR! Please ensure at least the 'Np' list in the parameter dictionary matches the same number of components as the list of data...")
+                    print('                              ')
 
-        # Obtain the number of clusters
-        numclus = len(uspis)
+                # Find unique cluster references
+                uspis = np.unique(spis)
 
-        # Have to define a custom log negative binomial function because of definition ambiguities...
-        def lognegbinom(n,mean,var):
+                # Obtain the number of clusters
+                numclus = len(uspis)
+
+                # Have to define a custom log negative binomial function because of definition ambiguities...
+                def lognegbinom(n,mean,var):
         
-            # Generate the log-likelihood of a negative binomial with defined mean and variance
-            sol = np.log((spec.gamma(((mean**2.0)/(var-mean))+n)/ \
-                  (spec.gamma(n+1.0)*spec.gamma(((mean**2.0)/(var-mean)))))* \
-                  ((mean/var)**((((mean**2.0)/(var-mean)))))*(((var-mean)/var)**n))
+                    # Generate the log-likelihood of a negative binomial with defined mean and variance
+                    sol = np.log((spec.gamma(((mean**2.0)/(var-mean))+n)/ \
+                          (spec.gamma(n+1.0)*spec.gamma(((mean**2.0)/(var-mean)))))* \
+                          ((mean/var)**((((mean**2.0)/(var-mean)))))*(((var-mean)/var)**n))
     
-            # If any overflow problems, use large argument expansion of log negative binomial
-            overflow_vals = np.isnan(sol)
-            overflow_n = n[overflow_vals]
-            sol[overflow_vals] = np.log((((1.0-(mean/var))**overflow_n)*(overflow_n**((mean**2.0/(var-mean))-1.0))* \
-                                         ((mean/var)**(mean**2.0/(var-mean)))/(spec.gamma(mean**2.0/(var-mean)))))
+                    # If any overflow problems, use large argument expansion of log negative binomial
+                    overflow_vals = np.isnan(sol)
+                    overflow_n = n[overflow_vals]
+                    sol[overflow_vals] = np.log((((1.0-(mean/var))**overflow_n)*(overflow_n**((mean**2.0/(var-mean))-1.0))* \
+                                                 ((mean/var)**(mean**2.0/(var-mean)))/(spec.gamma(mean**2.0/(var-mean)))))
 
-            # Avoiding further pathologies
-            if (var <= mean) or any(np.isnan(s) for s in sol) or mean==0.0 or (mean**2.0)/(var-mean) > 1.0: sol = -np.inf
+                    # Avoiding further pathologies
+                    if (var <= mean) or any(np.isnan(s) for s in sol) or mean==0.0 or (mean**2.0)/(var-mean) > 1.0: sol = -np.inf
     
-            return sol
+                    return sol
 
-        # Prepare log-likelihood for ensemble MC sampler
-        def loglike(params):
+                # Prepare log-likelihood for ensemble MC sampler
+                def loglike(params):
     
-            # Identify parameters
-            mean = np.asarray(params)[:len(params)-1]
-            lnvar = np.asarray(params)[len(params)-1]
-            var = np.exp(lnvar)
+                    # Identify parameters
+                    mean = np.asarray(params)[:len(params)-1]
+                    lnvar = np.asarray(params)[len(params)-1]
+                    var = np.exp(lnvar)
  
-            # Hard prior conditions to avoid inconsistent results
-            if len(mean) == 1:
-                if mean < 0.0 or lnvar < np.log(mean):
-                    return -np.inf
-                else:
-                    out = np.sum(np.asarray([np.sum(lognegbinom(count_data[i],mean,var)) for i in range(0,numdat)]))
+                    # Hard prior conditions to avoid inconsistent results
+                    if len(mean) == 1:
+                        if mean < 0.0 or lnvar < np.log(mean):
+                            return -np.inf
+                        else:
+                            out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean,var)) for i in range(0,numdat)]))
 
-            if len(mean) > 1:
-                if any(m < 0.0 for m in mean) or any(lnvar < np.log(m) for m in mean):
-                    return -np.inf
-                else:
-                    out = np.sum(np.asarray([np.sum(lognegbinom(count_data[i],mean[i],var)) for i in range(0,numdat)]))
+                    if len(mean) > 1:
+                        if any(m < 0.0 for m in mean) or any(lnvar < np.log(m) for m in mean):
+                            return -np.inf
+                        else:
+                            out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean[i],var)) for i in range(0,numdat)]))
             
-            return out
+                    return out
 
-        # Generate the intial ensemble of walkers
-        init_ensemble = []
-
-        # For means...
-        for i in range(0,numdat): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
-
-        # For lnvar...    
-        init_ensemble.append(np.random.normal(walker_initconds[numdat][0],walker_initconds[numdat][1],size=num_walkers))
-
-        if self.suppress_terminal_output == False: 
-            print('                              ')
-            print('Running ensemble MC sampler...')
-            print('                              ')
-
-        # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
-        init_ensemble = np.asarray(init_ensemble).T
-        sampler = mc.EnsembleSampler(num_walkers, numdat+1, loglike)
-        sampler.run_mcmc(init_ensemble, num_iterations)
-        samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
-        
-        # Find maximum likelihood parameters and print them to screen
-        maxlnlike = -np.inf
-        maxlnlike_params = samples[0]
-        for sn in range(0,len(samples)):
-            if maxlnlike < loglike(samples[sn]):
-                maxlnlike = loglike(samples[sn])
-                maxlnlike_params = samples[sn]
-        print('Maxlnlike: ' + str(maxlnlike))
-        print('Maxlnlike parameters: ' + str(maxlnlike_params))
-        print('                                              ')
-
-        # Save samples to text data file in self.output_directory
-        np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
-
-        # If corner plot has been specified then generate this with: https://corner.readthedocs.io/en/latest/
-        if output_corner_plot == True: 
-
-            # Generate the appropriate plot labels if not already specified
-            if len(plot_labels) == 0:
+                # Generate the intial ensemble of walkers
+                init_ensemble = []
 
                 # For means...
-                for i in range(0,numdat): plot_labels.append("Mean(" + str(spis[i]) + ")")
+                for i in range(0,numdat): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
 
-                # For lnvar... 
-                plot_labels.append("ln-Variance")
+                # For lnvar...    
+                init_ensemble.append(np.random.normal(walker_initconds[numdat][0],walker_initconds[numdat][1],size=num_walkers))
 
-            corner.corner(samples, labels=plot_labels)
+                if self.suppress_terminal_output == False: 
+                    print('                              ')
+                    print('Running ensemble MC sampler...')
+                    print('                              ')
 
-            # Output figure to plots directory
-            plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
+                # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
+                init_ensemble = np.asarray(init_ensemble).T
+                sampler = mc.EnsembleSampler(num_walkers, numdat+1, loglike)
+                sampler.run_mcmc(init_ensemble, num_iterations)
+                samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
+        
+                # Find maximum likelihood parameters and print them to screen
+                maxlnlike = -np.inf
+                maxlnlike_params = samples[0]
+                for sn in range(0,len(samples)):
+                    if maxlnlike < loglike(samples[sn]):
+                        maxlnlike = loglike(samples[sn])
+                        maxlnlike_params = samples[sn]
+                print('Maxlnlike: ' + str(maxlnlike))
+                print('Maxlnlike parameters: ' + str(maxlnlike_params))
+                print('                                              ')
+
+                # Set the data samples for comparison with simulations
+                self.data_samples = samples
+
+                # Save samples to text data file in self.output_directory
+                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
+
+                # If corner plot has been specified then generate this with: https://corner.readthedocs.io/en/latest/
+                if output_corner_plot == True: 
+
+                    # Generate the appropriate plot labels if not already specified
+                    if len(plot_labels) == 0:
+
+                        # For means...
+                        for i in range(0,numdat): plot_labels.append("Mean(" + str(spis[i]) + ")")
+
+                        # For lnvar... 
+                        plot_labels.append("ln-Variance")
+
+                    corner.corner(samples, labels=plot_labels)
+
+                    # Output figure to plots directory
+                    plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
 
 
     # Just some front page propaganda...
