@@ -708,7 +708,7 @@ class helmpy:
 
                 # If migration has been specified, update the age-binned ensemble mean worm burdens
                 if self.migration_mode == True:
-                    ws_age_binned = np.split(ws_ind_perclus[i].astype(float),Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])],axis=0)
+                    ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
                     last_ensM[uspis[i]==spis] = np.asarray([np.sum(ws_age_binned[j]/float(Nps[spis==uspis[i]][j]))/float(realisations) for j in range(0,len(Nps[spis==uspis[i]]))])
 
                 # If treatment has been specified, compute the ensemble mean and ensemble variance in the mean worm burden per cluster
@@ -790,8 +790,8 @@ class helmpy:
                     numgroup = len(Nps[spis==uspis[i]])
 
                     # Compute the simulated worm and Kato-Katz egg mean for each grouping and realisation
-                    ws_age_binned = np.split(ws_ind_perclus[i].astype(float),Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])],axis=0)
-                    gams_age_binned = np.split(gams_ind_perclus[i].astype(float),Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])],axis=0)
+                    ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
+                    gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
                     simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
 
                     # Obtain the Kato-Katz egg mean values from the data samples
