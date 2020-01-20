@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.special as spec
+import scipy.misc as scim
 import emcee as mc
 import corner
 
@@ -748,7 +749,7 @@ class helmpy:
                         # Due to Poissonian event draws, exact time of snapshot changes and is hence output for user records and comparison
                         if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))         
 
-        if self.suppress_terminal_output == False: print('\n')
+        if self.data_samples is None and self.suppress_terminal_output == False: print('\n')
 
         # It treatment has been specified, output the post-last treatment realisations per cluster in specified file names
         if self.treatment_times is not None:
@@ -774,17 +775,21 @@ class helmpy:
         if res_process_output == True:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
 
-        # If data has been fitted to then compare each simulation run to this and output likelihood of each in a tab-delimited .txt file for each cluster
+        # If data has been fitted to then compare each simulation run to this and output the variance-marginalised log likelihood of each in a tab-delimited .txt file for each cluster
         if self.data_samples is not None:
+
+            if self.suppress_terminal_output == False:
+                print('Now computing and outputting the variance-marginalised log likelihood for each realisation...')
+                print('                                                                                             ')
             
-            # If Kato-Katz data is specified then compare using the corresponding likelihood and output results
+            # If Kato-Katz data is specified then compare using the corresponding variance-marginalised log likelihood and output results
             if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
                 
                 # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
                 lamepg = self.data_specific_parameters['KatoKatz'][0]
 
                 # Loop over clusters
-                for i in range(0,numclus):
+                for i in range(0,numclus):	
 
                     # Number of groupings in the cluster
                     numgroup = len(Nps[spis==uspis[i]])
@@ -797,13 +802,18 @@ class helmpy:
                     # Obtain the Kato-Katz egg mean values from the data samples
                     dataKatoKatz_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
 
-                    # Compute the likelihood of each realisation
-                    eggmean_likelihood = np.prod(np.asarray([np.sum(np.exp(-(np.tensordot(dataKatoKatz_eggmeans[j],np.ones_like(simKatoKatz_eggmean[j]),axes=0)-\
-                                                                             np.tensordot(np.ones_like(dataKatoKatz_eggmeans[j]),simKatoKatz_eggmean[j],axes=0))**2.0),axis=0) \
-                                                                             for j in range(0,numgroup)]),axis=0)
+                    # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
+                    log10varslike = np.arange(-10.0,10.0,0.5)
 
-                    # Output the likelihood for each of the realisations to a tab-delimited .txt file in the specified output directory
-                    np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',eggmean_likelihood,delimiter='\t')
+                    # Compute the variance-marginalised log likelihood of each realisation
+                    eggmean_lnlikelihood = scim.logsumexp(scim.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(dataKatoKatz_eggmeans[j],np.ones_like(simKatoKatz_eggmean[j]),axes=0)-\
+                                           np.tensordot(np.ones_like(dataKatoKatz_eggmeans[j]),simKatoKatz_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                                           np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=0),axis=0)
+
+                    # Output the variance-marginalised log likelihood for each of the realisations to a tab-delimited .txt file in the specified output directory
+                    np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',eggmean_lnlikelihood,delimiter='\t')
+
+            if self.suppress_terminal_output == False: print('\n')
 
 
     # Define the mean-field worm sampler - draws stationary realisations of individual worm burdens from a cluster, stacked in age bins to match 
