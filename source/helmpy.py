@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.special as spec
-import scipy.misc as scim
 import emcee as mc
 import corner
 
@@ -76,10 +75,11 @@ class helmpy:
                                                  'R0samps':   [],    # Optional initialisation with posterior R0 samples in each grouping in a list of lists of length number of realisations 
                                                  'gamsamps':  []     # Optional initialisation with posterior gam samples in each grouping in a list of lists of length number of realisations
                                               }
-            # Default is that parameters are needed for simulation comparison to data
+            # Default is that parameters are not needed for simulation comparison to data
             self.default_data_specific_parameters = {
                                                         'KatoKatz':      [],    # Optional choice of lambda_epg (index 0 of list) for Kato-Katz egg count data 
-                                                        'qPCR':          []     # Optional choice of parameters in qPCR data
+                                                        'qPCR':          [],    # Optional choice of parameters in qPCR data
+                                                        'tolerances':    [1.0]  # Optional choice to input a list of tolerances (variances) for Gaussian synthetic likelihood
                                                      }
 
         self.parameter_dictionary = self.default_parameter_dictionary
@@ -775,18 +775,21 @@ class helmpy:
         if res_process_output == True:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
 
-        # If data has been fitted to then compare each simulation run to this and output the variance-marginalised log likelihood of each in a tab-delimited .txt file for each cluster
+        # If data has been fitted to then compare each simulation run to this and output the log likelihood of using each tolerance in a tab-delimited .txt file for each cluster
         if self.data_samples is not None:
 
             if self.suppress_terminal_output == False:
-                print('Now computing and outputting the variance-marginalised log likelihood for each realisation...')
+                print('Now computing and outputting the log likelihood for each realisation and tolerance...')
                 print('                                                                                             ')
             
-            # If Kato-Katz data is specified then compare using the corresponding variance-marginalised log likelihood and output results
+            # If Kato-Katz data is specified then compare using the corresponding log likelihood and output results
             if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
                 
                 # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
                 lamepg = self.data_specific_parameters['KatoKatz'][0]
+
+                # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
+                tols = self.data_specific_parameters['tolerances']
 
                 # Loop over clusters
                 for i in range(0,numclus):	
@@ -803,15 +806,15 @@ class helmpy:
                     dataKatoKatz_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
 
                     # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
-                    log10varslike = np.arange(-10.0,10.0,0.5)
+                    log10varslike = np.log10(np.asarray(tols))
 
-                    # Compute the variance-marginalised log likelihood of each realisation
-                    eggmean_lnlikelihood = scim.logsumexp(scim.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(dataKatoKatz_eggmeans[j],np.ones_like(simKatoKatz_eggmean[j]),axes=0)-\
+                    # Compute the log likelihood of each realisation
+                    eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(dataKatoKatz_eggmeans[j],np.ones_like(simKatoKatz_eggmean[j]),axes=0)-\
                                            np.tensordot(np.ones_like(dataKatoKatz_eggmeans[j]),simKatoKatz_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                           np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=0),axis=0)
+                                           np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
 
-                    # Output the variance-marginalised log likelihood for each of the realisations to a tab-delimited .txt file in the specified output directory
-                    np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',eggmean_lnlikelihood,delimiter='\t')
+                    # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
+                    np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
 
             if self.suppress_terminal_output == False: print('\n')
 
