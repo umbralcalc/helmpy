@@ -81,7 +81,7 @@ class helmpy:
             self.default_parameter_dictionary = {
                                                    'mu':     [1.0/70.0],      # Human death rate (per year)
                                                    'mu1':    [1.0/5.0],       # Adult worm death rate (per year)
-                                                   'mu2':    [1.0/3.0],       # Reservoir (infected snail) death rate (per year)
+                                                   'mu2':    [5.0],           # Reservoir (free-living larvae) death rate (per year)
                                                    'R0':     [2.5],           # Basic reproduction number within grouping
                                                    'k':      [0.3],           # Inverse-clumping factor within grouping
                                                    'gam':    [0.08],          # Density dependent fecundity power-law scaling z = exp(-gam)
