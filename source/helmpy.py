@@ -75,12 +75,48 @@ class helmpy:
                                                  'R0samps':   [],    # Optional initialisation with posterior R0 samples in each grouping in a list of lists of length number of realisations 
                                                  'gamsamps':  []     # Optional initialisation with posterior gam samples in each grouping in a list of lists of length number of realisations
                                               }
-            # Default is that parameters are not needed for simulation comparison to data
-            self.default_data_specific_parameters = {
-                                                        'KatoKatz':      [],    # Optional choice of lambda_epg (index 0 of list) for Kato-Katz egg count data 
-                                                        'qPCR':          [],    # Optional choice of parameters in qPCR data
-                                                        'tolerances':    [1.0]  # Optional choice to input a list of tolerances (variances) for Gaussian synthetic likelihood
-                                                     }
+
+        if self.helm_type == 'SCH':
+            # Default is one grouping with the same parameters in cluster '1'
+            self.default_parameter_dictionary = {
+                                                   'mu':     [1.0/70.0],      # Human death rate (per year)
+                                                   'mu1':    [1.0/5.0],       # Adult worm death rate (per year)
+                                                   'mu2':    [1.0/3.0],       # Reservoir (infected snail) death rate (per year)
+                                                   'R0':     [2.5],           # Basic reproduction number within grouping
+                                                   'k':      [0.3],           # Inverse-clumping factor within grouping
+                                                   'gam':    [0.08],          # Density dependent fecundity power-law scaling z = exp(-gam)
+                                                   'Np':     [100],           # Number of people within grouping
+                                                   'spi':    [1],             # Spatial index number of grouping - modify this only if varying spatially in clusters
+                                                   'r+':     [0.0],           # Migration i x i matrix - the migration rate in from each of the i clusters (per year) 
+                                                   'r-':     [0.0],           # Migration i x i matrix - the migration rate out to each of the i clusters (per year) 
+                                                   'Nm':     [1],             # Migrant number per event (global parameter) - must be integer - default is 1
+                                                   'brat':   [],              # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
+                                                   'Na':     [1],             # Number of people ageing per event (global parameter) - must be integer - default is 1
+                                                   'ari':    [0],             # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
+                                                 }
+            # Default is one grouping with the same initial conditions in cluster '1'
+            self.default_initial_conditions = {
+                                                 'M':          [2.6],      # Initial mean total worm burden within grouping
+                                                 'FOI':        [1.25],     # Initial force of infection (per year) within grouping
+                                                 'wormlist':   [],         # Optional initialisation of the separate worm burdens of individuals in each grouping in a list of length Np lists
+                                                 'lamlist':    [],         # Optional initialisation of the separate uptake rates of individuals in each grouping in a list of length Np lists  
+                                               }
+            # Default is to avoid using posterior samples
+            self.default_posterior_samples = {
+                                                 'Msamps':    [],    # Optional initialisation with posterior M samples in each grouping in a list of lists of length number of realisations
+                                                 'FOIsamps':  [],    # Optional initialisation with posterior FOI samples in each grouping in a list of lists of length number of realisations
+                                                 'ksamps':    [],    # Optional initialisation with posterior k samples in each grouping in a list of lists of length number of realisations
+                                                 'R0samps':   [],    # Optional initialisation with posterior R0 samples in each grouping in a list of lists of length number of realisations 
+                                                 'gamsamps':  []     # Optional initialisation with posterior gam samples in each grouping in a list of lists of length number of realisations
+                                              }
+
+        # Default is that parameters are not needed for simulation comparison to data
+        self.default_data_specific_parameters = {
+                                                    'KatoKatz':      [],    # Optional choice of lambda_epg (index 0 of list) for Kato-Katz egg count for STH or shisto mansoni data
+                                                    'UrineFil':      [],    # Optional for shisto haematobium data
+                                                    'qPCR':          [],    # Optional choice of parameters in qPCR data
+                                                    'tolerances':    [1.0]  # Optional choice to input a list of tolerances (variances) for Gaussian synthetic likelihood
+                                                 }
 
         self.parameter_dictionary = self.default_parameter_dictionary
         self.initial_conditions = self.default_initial_conditions
@@ -146,7 +182,7 @@ class helmpy:
         return
 
 
-    # Implements a Gillespie algorithm (https://en.wikipedia.org/wiki/Gillespie_algorithm) of the system, running a full stochastic simulation
+    # Implements a rejection algorithm (similar to Gillespie - https://en.wikipedia.org/wiki/Gillespie_algorithm) of the system, running a full stochastic simulation
     # while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region and outputting to file
     def run_full_stoch(self,
                        runtime,                    # Set the total time of the run in years
@@ -155,9 +191,8 @@ class helmpy:
                        output_filename,            # Set a filename for the data to be output in self.output_directory
                        timesteps_snapshot=[],      # Optional - output a snapshot of the worm burdens in each cluster after a specified number of steps in time
                        res_process_output=False,   # Optional - output the mean and 68 credible region of the infectious reservoir
-                       mf_migrations=False,        # Optional - use mean field egg count distribution to compute reservoir amplitudes while updating the ensemble mean worm burden
-                       mf_migrations_fixed=False   # Optional - set to True if eus migration pulses are drawn from egg count distributions with parameters fixed to the initial conditions
-                                                   #          - set to False (default) if eus migration pulses are drawn from egg count distributions with their ensemble means updated
+                       mf_migrations=False,        # Optional for STH - use mean field egg count distribution to compute reservoir amplitudes while updating the ensemble mean worm burden
+                       mf_migrations_fixed=False   # Optional for STH - the migration pulses are drawn from egg count distributions with parameters fixed to the initial conditions
                        ):
 
         # Terminal front page when code runs...
@@ -166,7 +201,7 @@ class helmpy:
         # Fix the dimensions for all of the groupings
         self.fix_groupings()
 
-        if self.helm_type == 'STH':
+        if self.helm_type == 'STH' or self.helm_type == 'SCH':
             
             # Set parameter values, initial conditions and cluster references for each realisation
             mus = np.asarray(self.parameter_dictionary['mu'])
@@ -212,6 +247,9 @@ class helmpy:
             gams_ind_perclus = []
             Nps_ind_perclus = []
 
+            # If considering schistosomes, keep track of the number of female worms in each person too
+            if self.helm_type == 'SCH': femws_ind_perclus = []
+
             # Check to see if ageing has been specified then set storage
             if len(brats) > 0: 
                 aris_ind_perclus = [] 
@@ -219,9 +257,15 @@ class helmpy:
                 age_number_reals_perclus_peragegroup = [[np.zeros(realisations) for j in range(0,maxaris[i]+1)] for i in range(0,numclus)]
                 age_order_ind_perclus_peragegroup = [[np.empty((0,realisations),float) for j in range(0,maxaris[i]+1)] for i in range(0,numclus)]
 
-            # Function which maps from worms to eggs in the standard migration model
-            def worm_to_egg_func(wormvals,gamvals):
-                return (1.0-(2.0**(1.0-wormvals.astype(float))))*wormvals.astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
+            if self.helm_type == 'STH':
+                # Function which maps from worms to eggs in the standard polygamous mating, density-dependent model for STH
+                def worm_to_egg_func(wormvals,gamvals):
+                    return (1.0-(2.0**(1.0-wormvals.astype(float))))*wormvals.astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
+
+            if self.helm_type == 'SCH':
+                # Function which maps from worms to eggs in the standard monogamous mating, density-dependent model for SCH
+                def worm_to_egg_func(wormvals,femwormvals,gamvals):
+                    return np.minimum(wormvals,femwormvals).astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
 
             # If treatment has been specified, allocate memory
             if self.treatment_times is not None: 
@@ -234,7 +278,11 @@ class helmpy:
             # If migration has been specified, allocate memory for reservoir pulses
             if self.migration_mode == True: eggpulse_ind_perclus = []
 
-            if self.suppress_terminal_output == False: print('Setting initial conditions...')
+            if self.suppress_terminal_output == False: 
+                if self.helm_type == 'STH': print('Soil-transmitted helminth mode enabled')
+                if self.helm_type == 'SCH': print('Schistosome mode enabled')
+                print('                                                    ')
+                print('Setting initial conditions...')
 
             # Slow way to initialise a sampled pickup rate 'lambda', initial worm burden, initial worm uptake time and initial worm death time per individual per cluster
             for i in range(0,numclus):
@@ -248,6 +296,9 @@ class helmpy:
                 mu2s_ind_clus = np.empty((0,realisations),float)
                 gams_ind_clus = np.empty((0,realisations),float)
                 Nps_ind_clus = np.empty((0,realisations),float)
+
+                # If considering schistosomes, keep track of the number of female worms in each person too
+                if self.helm_type == 'SCH': femws_ind_clus = np.empty((0,realisations),float)
 
                 # Check to see if ageing has been specified then set storage
                 if len(brats) > 0: aris_ind_clus = np.empty((0,realisations),float)
@@ -368,6 +419,11 @@ class helmpy:
                 mu2s_ind_perclus.append(mu2s_ind_clus)
                 gams_ind_perclus.append(gams_ind_clus)
                 Nps_ind_perclus.append(Nps_ind_clus)
+
+                # If considering schistosomes, keep track of the number of female worms in each person too
+                if self.helm_type == 'SCH':
+                    femws_ind_clus = np.random.binomial(ws_ind_clus.astype(int),0.5*np.ones((np.size(ws_ind_clus,0),realisations)),size=(np.size(ws_ind_clus,0),realisations)).astype(float)
+                    femws_ind_perclus.append(femws_ind_clus)
 
                 # Check to see if ageing has been specified then append list
                 if len(brats) > 0: aris_ind_perclus.append(aris_ind_clus)
@@ -525,6 +581,15 @@ class helmpy:
                     ws_ind_perclus[i][aris_ind_perclus[i]==0][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
                                                               (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)] = 0.0
 
+                    # Perform the same set of tasks for female worm burdens if schistosomiasis has been chosen
+                    if self.helm_type == 'SCH':
+                        femwbs_next_agegroup = np.zeros_like(femws_ind_perclus[i][aris_ind_perclus[i]==0][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
+                                                                                                          (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)])
+                        femwbs_next_agegroup = femws_ind_perclus[i][aris_ind_perclus[i]==0][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
+                                                                                            (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)]
+                        femws_ind_perclus[i][aris_ind_perclus[i]==0][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
+                                                                     (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)] = 0.0
+
                     # If more age groups exist in the cluster then cascade the ageing up all groups successively with the same ageing method
                     for j in range(1,maxaris[i]+1):
 
@@ -560,6 +625,17 @@ class helmpy:
 
                         # Set the new lower worm burdens to those of the ageing individuals in the current age group
                         wbs_next_agegroup = store_wbs_next_agegroup
+
+                        # Perform the same set of tasks for female worm burdens if schistosomiasis has been chosen
+                        if self.helm_type == 'SCH':   
+                            store_femwbs_next_agegroup = \
+                                               np.zeros_like(femws_ind_perclus[i][aris_ind_perclus[i]==j][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
+                                                                                                          (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)])
+                            store_femwbs_next_agegroup = femws_ind_perclus[i][aris_ind_perclus[i]==j][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
+                                                                                                      (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)]
+                            femws_ind_perclus[i][aris_ind_perclus[i]==j][(is_ageing)*((is_above==False)*(is_below==False))*(overrun_age_number_reals==False) + \
+                                                                         (is_ageing)*((is_above==False)+(is_below==False))*(overrun_age_number_reals==True)] = femwbs_next_agegroup
+                            femwbs_next_agegroup = store_femwbs_next_agegroup
                                                                      
                 # If treatment has been specified, apply coverage fraction to individuals within a cluster (removing their worms completely)
                 if self.treatment_times is not None:
@@ -579,6 +655,13 @@ class helmpy:
                             ws_ind_perclus[i] = ws_ind_perclus[i]*(treatment_realisations > cov_ind_perclus[i][np.arange(0,len(treat_ind),1)[treat_ind==True][0]]) + \
                                                 ws_after_treat*(self.drug_efficacy < 1.0)*(treatment_realisations <= cov_ind_perclus[i][np.arange(0,len(treat_ind),1)[treat_ind==True][0]])
 
+                            # Perform the same set of tasks for female worm burdens if schistosomiasis has been chosen
+                            if self.helm_type == 'SCH':
+                                femws_after_treat = np.random.binomial(femws_ind_perclus[i].astype(int), \
+                                                    (1.0-self.drug_efficacy)*np.ones_like(femws_ind_perclus[i]),size=(np.sum(Nps[spis==uspis[i]]),realisations))
+                                femws_ind_perclus[i] = femws_ind_perclus[i]*(treatment_realisations > cov_ind_perclus[i][np.arange(0,len(treat_ind),1)[treat_ind==True][0]]) + \
+                                                       femws_after_treat*(self.drug_efficacy < 1.0)*(treatment_realisations <= cov_ind_perclus[i][np.arange(0,len(treat_ind),1)[treat_ind==True][0]])
+
                         # Take into account the specified random compliance pattern if chosen
                         if self.compliance_params is not None:
 
@@ -593,11 +676,21 @@ class helmpy:
                             ws_after_treat = np.random.binomial(ws_ind_perclus[i].astype(int), \
                                              (1.0-self.drug_efficacy)*np.ones_like(ws_ind_perclus[i]),size=(np.sum(Nps[spis==uspis[i]]),realisations))
 
+                            # Perform the same task for female worm burdens if schistosomiasis has been chosen
+                            if self.helm_type == 'SCH':
+                                femws_after_treat = np.random.binomial(femws_ind_perclus[i].astype(int), \
+                                                   (1.0-self.drug_efficacy)*np.ones_like(femws_ind_perclus[i]),size=(np.sum(Nps[spis==uspis[i]]),realisations))
+
                             # If in first round, just remove the worms of those treated according to the coverage probability and store the past behaviour
                             if treat_ind[0] == True:
                                 ws_ind_perclus[i] = ws_ind_perclus[i]*(treatment_realisations > alpha_val) + \
                                                     ws_after_treat*(self.drug_efficacy < 1.0)*(treatment_realisations <= alpha_val)
                                 last_round_behaviour_ind_perclus[i] = (treatment_realisations <= alpha_val)
+
+                                # Perform the same task for female worm burdens if schistosomiasis has been chosen
+                                if self.helm_type == 'SCH':
+                                    femws_ind_perclus[i] = femws_ind_perclus[i]*(treatment_realisations > alpha_val) + \
+                                                           femws_after_treat*(self.drug_efficacy < 1.0)*(treatment_realisations <= alpha_val)
 
                             # If not in first round, compute probabilities for the individuals based on their last round behaviour and then apply treatment accordingly
                             if treat_ind[0] == False:
@@ -608,6 +701,11 @@ class helmpy:
                                 # Remove the worms of those treated
                                 ws_ind_perclus[i] = ws_ind_perclus[i]*(treatment_realisations > cond_probabilities) + \
                                                     ws_after_treat*(self.drug_efficacy < 1.0)*(treatment_realisations <= cond_probabilities)
+
+                                # Perform the same task for female worm burdens if schistosomiasis has been chosen
+                                if self.helm_type == 'SCH':
+                                    femws_ind_perclus[i] = femws_ind_perclus[i]*(treatment_realisations > cond_probabilities) + \
+                                                           femws_after_treat*(self.drug_efficacy < 1.0)*(treatment_realisations <= cond_probabilities)
 
                                 # Store this round as the new 'last round behaviour'
                                 last_round_behaviour_ind_perclus[i] = (treatment_realisations <= cond_probabilities)
@@ -628,6 +726,11 @@ class helmpy:
 
                 # Total event rates
                 trs = urs + drs + (np.ones((np.sum(Nps[spis==uspis[i]]),realisations))/do_nothing_timescale)
+
+                # Perform the same tasks for female worm burdens if schistosomiasis has been chosen
+                if self.helm_type == 'SCH':
+                    femdrs = (mus_ind_perclus[i]+mu1s_ind_perclus[i])*femws_ind_perclus[i].astype(float)
+                    femtrs = urs + femdrs + (np.ones((np.sum(Nps[spis==uspis[i]]),realisations))/do_nothing_timescale)
  
                 # Call a unform-random number generator for the events available to the individual in the cluster
                 randgen_ind_clus = np.random.uniform(size=(np.sum(Nps[spis==uspis[i]]),realisations))
@@ -636,10 +739,23 @@ class helmpy:
                 ws_ind_perclus[i] += (randgen_ind_clus < urs/trs) 
                 ws_ind_perclus[i] -= (ws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+drs)/trs)
 
-                # Compute the total force of infection within the cluster and convert it into a matrix for calculation
-                totFOI_clus = np.sum((1.0-(2.0**(1.0-ws_ind_perclus[i].astype(float))))*ws_ind_perclus[i].astype(float)* \
-                                     np.exp(-gams_ind_perclus[i]*(ws_ind_perclus[i].astype(float)-1.0))/float(np.sum(Nps[spis==uspis[i]])),axis=0)
-                totFOI_clus_mat = np.tensordot(np.ones(np.sum(Nps[spis==uspis[i]])),totFOI_clus,axes=0)
+                # If considering STH use a polygamous mating function for the reservoir update
+                if self.helm_type == 'STH':
+                    # Compute the total force of infection within the cluster and convert it into a matrix for calculation
+                    totFOI_clus = np.sum((1.0-(2.0**(1.0-ws_ind_perclus[i].astype(float))))*ws_ind_perclus[i].astype(float)* \
+                                         np.exp(-gams_ind_perclus[i]*(ws_ind_perclus[i].astype(float)-1.0))/float(np.sum(Nps[spis==uspis[i]])),axis=0)
+                    totFOI_clus_mat = np.tensordot(np.ones(np.sum(Nps[spis==uspis[i]])),totFOI_clus,axes=0)
+
+                # If considering SCH, update the female worms and use a monogamous mating function for the reservoir update
+                if self.helm_type == 'SCH':
+                    # Decide on worm uptake, death or nothing for the individual female worms by adding a binomial probability
+                    femws_ind_perclus[i] += (randgen_ind_clus < urs/femtrs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape) 
+                    femws_ind_perclus[i] -= (femws_ind_perclus[i]>0)*(randgen_ind_clus > urs/femtrs)*(randgen_ind_clus < (urs+femdrs)/femtrs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape)
+
+                    # Compute the total force of infection within the cluster and convert it into a matrix for calculation
+                    totFOI_clus = np.sum(np.minimum(ws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
+                                         np.exp(-gams_ind_perclus[i]*(ws_ind_perclus[i].astype(float)-1.0))/float(np.sum(Nps[spis==uspis[i]])),axis=0)
+                    totFOI_clus_mat = np.tensordot(np.ones(np.sum(Nps[spis==uspis[i]])),totFOI_clus,axes=0)
 
                 # Update the forces of infection
                 FOIs_ind_perclus[i] += ((mu2s_ind_perclus[i]*(mus_ind_perclus[i]+mu1s_ind_perclus[i])*R0s_ind_perclus[i]*totFOI_clus_mat) - \
@@ -648,8 +764,8 @@ class helmpy:
                 # If migration has been specified, compute egg pulses into the reservoir
                 if self.migration_mode == True:
 
-                    # If specified, draw egg counts from distributions fixed to the initial ensemble mean worm burdens
-                    if mf_migrations_fixed == True: last_ensM = Ms
+                    # If specified, draw egg counts from distributions fixed to the initial ensemble mean worm burdens for STH
+                    if mf_migrations_fixed == True and self.helm_type == 'STH': last_ensM = Ms
 
                     # Migration event rate sum relative to each cluster - if the self-migration ([i,i] element) is chosen then half the sum of both migration rates
                     mig_rate_relclus = np.tensordot(((i==reduce_loop)*(rps[i][reduce_loop:] + rms[i][reduce_loop:])/2.0) + \
@@ -658,17 +774,23 @@ class helmpy:
                     rps_mat = np.tensordot(rps[i][reduce_loop:],np.ones(realisations),axes=0)
                     rms_mat = np.tensordot(rms[i][reduce_loop:],np.ones(realisations),axes=0)
 
-                    # Compute the egg pulse amplitudes from the mean field if specified
-                    if mf_migrations == True:
+                    # Compute the egg pulse amplitudes from the mean field if specified for STH
+                    if mf_migrations == True and self.helm_type == 'STH':
                         # Egg pulse amplitude relative to each cluster computed from mean field
                         egg_pulse_relclus = np.asarray([self.egg_STH_pulse_sampler(last_ensM[spis==uspis[j]],j,realisations,Nummig_per_event) for j in range(reduce_loop,numclus)])
 
-                    # Compute the egg pulse amplitudes from randomly-selected individuals in the respective reservoirs
-                    if mf_migrations == False:
+                    # Compute the egg pulse amplitudes from randomly-selected individuals in the respective reservoirs for STH
+                    if mf_migrations == False and self.helm_type == 'STH':
                         # Draw random egg counts from people for use in the standard reservoir pulses
                         egg_pulse_relclus = np.asarray([np.sum(worm_to_egg_func(ws_ind_perclus[j],gams_ind_perclus[j])[np.random.randint(0,np.sum(Nps[spis==uspis[j]]),\
                                                                                                   size=Nummig_per_event),:],axis=0) for j in range(reduce_loop,numclus)])
 
+                    # Compute the egg pulse amplitudes from randomly-selected individuals in the respective reservoirs for SCH
+                    if self.helm_type == 'SCH':
+                        # Draw random egg counts from people for use in the standard reservoir pulses
+                        egg_pulse_relclus = np.asarray([np.sum(worm_to_egg_func(ws_ind_perclus[j],femws_ind_perclus[j],gams_ind_perclus[j])[np.random.randint(0,np.sum(Nps[spis==uspis[j]]),\
+                                                                                                                       size=Nummig_per_event),:],axis=0) for j in range(reduce_loop,numclus)])
+                    
                     # Call a unform-random number generator for the migratory events available 
                     randgen_mig = np.random.uniform(size=(len(uspis[reduce_loop:]),realisations))
                     
@@ -800,7 +922,16 @@ class helmpy:
                     # Compute the simulated worm and Kato-Katz egg mean for each grouping and realisation
                     ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
                     gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-                    simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+
+                    # Compute the simulated sample mean egg count if STH
+                    if self.helm_type == 'STH':
+                         simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+
+                    # Compute the simulated sample mean egg count if schistosomiasis
+                    if self.helm_type == 'SCH':
+                         femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
+                         simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                for j in range(0,numgroup)]
 
                     # Obtain the Kato-Katz egg mean values from the data samples
                     dataKatoKatz_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
@@ -945,7 +1076,10 @@ class helmpy:
             # Obtain the number of clusters
             numclus = len(uspis)
 
-            if self.suppress_terminal_output == False: print('Setting initial conditions...')
+            if self.suppress_terminal_output == False: 
+                print('Soil-transmitted helminth mode enabled')
+                print('                                      ')
+                print('Setting initial conditions...')
 
             # Define the mean-field deterministic system of differential equations to govern the STH transmission dynamics
             def meanfield_STHsystem(time,MsFOIs):
@@ -1083,7 +1217,10 @@ class helmpy:
             # Obtain an array of total number of people within the cluster of the indexed grouping (useful later)
             Nptots = np.asarray([np.sum(Nps[spis==spis[spii]]) for spii in range(0,len(spis))])
 
-            if self.suppress_terminal_output == False: print('Setting initial conditions...')
+            if self.suppress_terminal_output == False: 
+                print('Soil-transmitted helminth mode enabled')
+                print('                                      ')
+                print('Setting initial conditions...')
 
             # Create realisations of the individual uptake rate sums 
             sumlams = np.asarray([np.sum(np.random.gamma(ks[i]*np.ones((realisations,Nps[i])), \
@@ -1278,126 +1415,124 @@ class helmpy:
 
         if self.suppress_terminal_output == False: print('Now generating posterior samples...')
 
-        if self.helm_type == 'STH':
-           
-            # If Kato-Katz data is specified then perform the corresponding fitting procedure
-            if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
+        # If Kato-Katz data is specified for either STH or schistosomiasis (mansoni) then perform the corresponding fitting procedure
+        if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
 
-                # Fix the dimensions for all of the groupings
-                self.fix_groupings()
+            # Fix the dimensions for all of the groupings
+            self.fix_groupings()
 
-                # Find the spatial indices to identify clusters
-                spis = np.asarray(self.parameter_dictionary['spi'])
+            # Find the spatial indices to identify clusters
+            spis = np.asarray(self.parameter_dictionary['spi'])
 
-                # Find the number of data components and check to see if this matches the parameter dictionary lists in number
-                numdat = len(data)
-                Nps = np.asarray(self.parameter_dictionary['Np'])
-                if len(Nps) != numdat: 
-                    print('                              ')
-                    print("ERROR! Please ensure at least the 'Np' list in the parameter dictionary matches the same number of components as the list of data...")
-                    print('                              ')
+            # Find the number of data components and check to see if this matches the parameter dictionary lists in number
+            numdat = len(data)
+            Nps = np.asarray(self.parameter_dictionary['Np'])
+            if len(Nps) != numdat: 
+                print('                              ')
+                print("ERROR! Please ensure at least the 'Np' list in the parameter dictionary matches the same number of components as the list of data...")
+                print('                              ')
 
-                # Find unique cluster references
-                uspis = np.unique(spis)
+            # Find unique cluster references
+            uspis = np.unique(spis)
 
-                # Obtain the number of clusters
-                numclus = len(uspis)
+            # Obtain the number of clusters
+            numclus = len(uspis)
 
-                # Have to define a custom log negative binomial function because of definition ambiguities...
-                def lognegbinom(n,mean,var):
+            # Have to define a custom log negative binomial function because of definition ambiguities...
+            def lognegbinom(n,mean,var):
         
-                    # Generate the log-likelihood of a negative binomial with defined mean and variance
-                    sol = np.log((spec.gamma(((mean**2.0)/(var-mean))+n)/ \
-                          (spec.gamma(n+1.0)*spec.gamma(((mean**2.0)/(var-mean)))))* \
-                          ((mean/var)**((((mean**2.0)/(var-mean)))))*(((var-mean)/var)**n))
+                # Generate the log-likelihood of a negative binomial with defined mean and variance
+                sol = np.log((spec.gamma(((mean**2.0)/(var-mean))+n)/ \
+                      (spec.gamma(n+1.0)*spec.gamma(((mean**2.0)/(var-mean)))))* \
+                      ((mean/var)**((((mean**2.0)/(var-mean)))))*(((var-mean)/var)**n))
     
-                    # If any overflow problems, use large argument expansion of log negative binomial
-                    overflow_vals = np.isnan(sol)
-                    overflow_n = n[overflow_vals]
-                    sol[overflow_vals] = np.log((((1.0-(mean/var))**overflow_n)*(overflow_n**((mean**2.0/(var-mean))-1.0))* \
-                                                 ((mean/var)**(mean**2.0/(var-mean)))/(spec.gamma(mean**2.0/(var-mean)))))
+                # If any overflow problems, use large argument expansion of log negative binomial
+                overflow_vals = np.isnan(sol)
+                overflow_n = n[overflow_vals]
+                sol[overflow_vals] = np.log((((1.0-(mean/var))**overflow_n)*(overflow_n**((mean**2.0/(var-mean))-1.0))* \
+                                             ((mean/var)**(mean**2.0/(var-mean)))/(spec.gamma(mean**2.0/(var-mean)))))
 
-                    # Avoiding further pathologies
-                    if (var <= mean) or any(np.isnan(s) for s in sol) or mean==0.0 or (mean**2.0)/(var-mean) > 1.0: sol = -np.inf
+                # Avoiding further pathologies
+                if (var <= mean) or any(np.isnan(s) for s in sol) or mean==0.0 or (mean**2.0)/(var-mean) > 1.0: sol = -np.inf
     
-                    return sol
+                return sol
 
-                # Prepare log-likelihood for ensemble MC sampler
-                def loglike(params):
+            # Prepare log-likelihood for ensemble MC sampler
+            def loglike(params):
     
-                    # Identify parameters
-                    mean = np.asarray(params)[:len(params)-1]
-                    lnvar = np.asarray(params)[len(params)-1]
-                    var = np.exp(lnvar)
+                # Identify parameters
+                mean = np.asarray(params)[:len(params)-1]
+                lnvar = np.asarray(params)[len(params)-1]
+                var = np.exp(lnvar)
  
-                    # Hard prior conditions to avoid inconsistent results
-                    if len(mean) == 1:
-                        if mean < 0.0 or lnvar < np.log(mean):
-                            return -np.inf
-                        else:
-                            out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean,var)) for i in range(0,numdat)]))
+                # Hard prior conditions to avoid inconsistent results
+                if len(mean) == 1:
+                    if mean < 0.0 or lnvar < np.log(mean):
+                        return -np.inf
+                    else:
+                        out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean,var)) for i in range(0,numdat)]))
 
-                    if len(mean) > 1:
-                        if any(m < 0.0 for m in mean) or any(lnvar < np.log(m) for m in mean):
-                            return -np.inf
-                        else:
-                            out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean[i],var)) for i in range(0,numdat)]))
+                if len(mean) > 1:
+                    if any(m < 0.0 for m in mean) or any(lnvar < np.log(m) for m in mean):
+                        return -np.inf
+                    else:
+                        out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean[i],var)) for i in range(0,numdat)]))
             
-                    return out
+                return out
 
-                # Generate the intial ensemble of walkers
-                init_ensemble = []
+            # Generate the intial ensemble of walkers
+            init_ensemble = []
 
-                # For means...
-                for i in range(0,numdat): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
+            # For means...
+            for i in range(0,numdat): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
 
-                # For lnvar...    
-                init_ensemble.append(np.random.normal(walker_initconds[numdat][0],walker_initconds[numdat][1],size=num_walkers))
+            # For lnvar...    
+            init_ensemble.append(np.random.normal(walker_initconds[numdat][0],walker_initconds[numdat][1],size=num_walkers))
 
-                if self.suppress_terminal_output == False: 
-                    print('                              ')
-                    print('Running ensemble MC sampler...')
-                    print('                              ')
+            if self.suppress_terminal_output == False: 
+                print('                              ')
+                print('Running ensemble MC sampler...')
+                print('                              ')
 
-                # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
-                init_ensemble = np.asarray(init_ensemble).T
-                sampler = mc.EnsembleSampler(num_walkers, numdat+1, loglike)
-                sampler.run_mcmc(init_ensemble, num_iterations)
-                samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
+            # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
+            init_ensemble = np.asarray(init_ensemble).T
+            sampler = mc.EnsembleSampler(num_walkers, numdat+1, loglike)
+            sampler.run_mcmc(init_ensemble, num_iterations)
+            samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
         
-                # Find maximum likelihood parameters and print them to screen
-                maxlnlike = -np.inf
-                maxlnlike_params = samples[0]
-                for sn in range(0,len(samples)):
-                    if maxlnlike < loglike(samples[sn]):
-                        maxlnlike = loglike(samples[sn])
-                        maxlnlike_params = samples[sn]
-                print('Maxlnlike: ' + str(maxlnlike))
-                print('Maxlnlike parameters: ' + str(maxlnlike_params))
-                print('                                              ')
+            # Find maximum likelihood parameters and print them to screen
+            maxlnlike = -np.inf
+            maxlnlike_params = samples[0]
+            for sn in range(0,len(samples)):
+                if maxlnlike < loglike(samples[sn]):
+                    maxlnlike = loglike(samples[sn])
+                    maxlnlike_params = samples[sn]
+            print('Maxlnlike: ' + str(maxlnlike))
+            print('Maxlnlike parameters: ' + str(maxlnlike_params))
+            print('                                              ')
 
-                # Set the data samples for comparison with simulations
-                self.data_samples = samples
+            # Set the data samples for comparison with simulations
+            self.data_samples = samples
 
-                # Save samples to text data file in self.output_directory
-                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
+            # Save samples to text data file in self.output_directory
+            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
 
-                # If corner plot has been specified then generate this with: https://corner.readthedocs.io/en/latest/
-                if output_corner_plot == True: 
+            # If corner plot has been specified then generate this with: https://corner.readthedocs.io/en/latest/
+            if output_corner_plot == True: 
 
-                    # Generate the appropriate plot labels if not already specified
-                    if len(plot_labels) == 0:
+                # Generate the appropriate plot labels if not already specified
+                if len(plot_labels) == 0:
 
-                        # For means...
-                        for i in range(0,numdat): plot_labels.append("Mean(" + str(spis[i]) + ")")
+                    # For means...
+                    for i in range(0,numdat): plot_labels.append("Mean(" + str(spis[i]) + ")")
 
-                        # For lnvar... 
-                        plot_labels.append("ln-Variance")
+                    # For lnvar... 
+                    plot_labels.append("ln-Variance")
 
-                    corner.corner(samples, labels=plot_labels)
+                corner.corner(samples, labels=plot_labels)
 
-                    # Output figure to plots directory
-                    plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
+                # Output figure to plots directory
+                plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
 
 
     # Just some front page propaganda...
@@ -1425,5 +1560,4 @@ class helmpy:
         print('              DISTRIBUTED UNDER MIT LICENSE              ')
         print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
         print('                                                         ')
-
 
