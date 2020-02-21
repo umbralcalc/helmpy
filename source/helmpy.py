@@ -82,9 +82,9 @@ class helmpy:
                                                    'mu':     [1.0/70.0],      # Human death rate (per year)
                                                    'mu1':    [1.0/5.0],       # Adult worm death rate (per year)
                                                    'mu2':    [5.0],           # Reservoir (free-living larvae) death rate (per year)
-                                                   'R0':     [2.5],           # Basic reproduction number within grouping
+                                                   'R0':     [3.5],           # Basic reproduction number within grouping
                                                    'k':      [0.3],           # Inverse-clumping factor within grouping
-                                                   'gam':    [0.08],          # Density dependent fecundity power-law scaling z = exp(-gam)
+                                                   'gam':    [0.01],          # Density dependent fecundity power-law scaling z = exp(-gam)
                                                    'Np':     [100],           # Number of people within grouping
                                                    'spi':    [1],             # Spatial index number of grouping - modify this only if varying spatially in clusters
                                                    'r+':     [0.0],           # Migration i x i matrix - the migration rate in from each of the i clusters (per year) 
@@ -96,7 +96,7 @@ class helmpy:
                                                  }
             # Default is one grouping with the same initial conditions in cluster '1'
             self.default_initial_conditions = {
-                                                 'M':          [2.6],      # Initial mean total worm burden within grouping
+                                                 'M':          [4.9],      # Initial mean total worm burden within grouping
                                                  'FOI':        [1.25],     # Initial force of infection (per year) within grouping
                                                  'wormlist':   [],         # Optional initialisation of the separate worm burdens of individuals in each grouping in a list of length Np lists
                                                  'lamlist':    [],         # Optional initialisation of the separate uptake rates of individuals in each grouping in a list of length Np lists  
@@ -743,9 +743,12 @@ class helmpy:
 
                 # If considering SCH, update the female worms and use a monogamous mating function for the reservoir update
                 if self.helm_type == 'SCH':
+                    # Calculate the female worm death rate based on the current number of female worms
+                    femdrs = (mus_ind_perclus[i]+mu1s_ind_perclus[i])*femws_ind_perclus[i].astype(float)
+
                     # Decide on worm uptake, death or nothing for the individual female worms by adding a binomial probability
                     femws_ind_perclus[i] += (randgen_ind_clus < urs/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape) 
-                    femws_ind_perclus[i] -= (femws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+drs)/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape)
+                    femws_ind_perclus[i] -= (femws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+femdrs)/trs)
 
                     # Compute the total force of infection within the cluster and convert it into a matrix for calculation
                     totFOI_clus = np.sum((ws_ind_perclus[i]>0)*(ws_ind_perclus[i]>femws_ind_perclus[i])*np.minimum(ws_ind_perclus[i]-femws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
@@ -816,9 +819,9 @@ class helmpy:
 
                 # Compute the ensemble mean, ensemble variance as well as the upper and lower limits of the 68 credible region in the reservoir of infection per cluster, if specified
                 if res_process_output == True:
-                    ensMres_perclus = np.sum(totFOI_clus)/float(realisations)
-                    ensVres_perclus = np.sum((totFOI_clus-ensMres_perclus)**2.0)/float(realisations)
-                    [ensup68CLres_perclus,enslw68CLres_perclus] = np.percentile(totFOI_clus,[84,16])
+                    ensMres_perclus = np.sum(FOIs_ind_perclus[i][0])/float(realisations)
+                    ensVres_perclus = np.sum((FOIs_ind_perclus[i][0]-ensMres_perclus)**2.0)/float(realisations)
+                    [ensup68CLres_perclus,enslw68CLres_perclus] = np.percentile(FOIs_ind_perclus[i][0],[84,16])
                     ensMres_perclus_output += [ensMres_perclus]
                     ensVres_perclus_output += [ensVres_perclus]
                     ensup68CLres_perclus_output += [ensup68CLres_perclus]
