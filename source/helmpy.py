@@ -930,7 +930,7 @@ class helmpy:
                     # Compute the simulated sample mean egg count if schistosomiasis
                     if self.helm_type == 'SCH':
                          femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-                         simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                         simKatoKatz_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
                                                 for j in range(0,numgroup)]
 
                     # Obtain the Kato-Katz egg mean values from the data samples
