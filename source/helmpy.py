@@ -730,7 +730,6 @@ class helmpy:
                 # Perform the same tasks for female worm burdens if schistosomiasis has been chosen
                 if self.helm_type == 'SCH':
                     femdrs = (mus_ind_perclus[i]+mu1s_ind_perclus[i])*femws_ind_perclus[i].astype(float)
-                    femtrs = urs + femdrs + (np.ones((np.sum(Nps[spis==uspis[i]]),realisations))/do_nothing_timescale)
  
                 # Call a unform-random number generator for the events available to the individual in the cluster
                 randgen_ind_clus = np.random.uniform(size=(np.sum(Nps[spis==uspis[i]]),realisations))
@@ -749,8 +748,8 @@ class helmpy:
                 # If considering SCH, update the female worms and use a monogamous mating function for the reservoir update
                 if self.helm_type == 'SCH':
                     # Decide on worm uptake, death or nothing for the individual female worms by adding a binomial probability
-                    femws_ind_perclus[i] += (randgen_ind_clus < urs/femtrs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape) 
-                    femws_ind_perclus[i] -= (femws_ind_perclus[i]>0)*(randgen_ind_clus > urs/femtrs)*(randgen_ind_clus < (urs+femdrs)/femtrs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape)
+                    femws_ind_perclus[i] += (randgen_ind_clus < urs/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape) 
+                    femws_ind_perclus[i] -= (ws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+femdrs)/trs)
 
                     # Compute the total force of infection within the cluster and convert it into a matrix for calculation
                     totFOI_clus = np.sum(np.minimum(ws_ind_perclus[i]-femws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
