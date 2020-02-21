@@ -265,7 +265,7 @@ class helmpy:
             if self.helm_type == 'SCH':
                 # Function which maps from worms to eggs in the standard monogamous mating, density-dependent model for SCH
                 def worm_to_egg_func(wormvals,femwormvals,gamvals):
-                    return (wormvals>0)*np.minimum(wormvals-femwormvals,femwormvals).astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
+                    return (wormvals>0)*(wormvals>femwormvals)*np.minimum(wormvals-femwormvals,femwormvals).astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
 
             # If treatment has been specified, allocate memory
             if self.treatment_times is not None: 
@@ -745,10 +745,10 @@ class helmpy:
                 if self.helm_type == 'SCH':
                     # Decide on worm uptake, death or nothing for the individual female worms by adding a binomial probability
                     femws_ind_perclus[i] += (randgen_ind_clus < urs/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape) 
-                    femws_ind_perclus[i] -= (ws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+drs)/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape)
+                    femws_ind_perclus[i] -= (femws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+drs)/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape)
 
                     # Compute the total force of infection within the cluster and convert it into a matrix for calculation
-                    totFOI_clus = np.sum((ws_ind_perclus[i]>0)*np.minimum(ws_ind_perclus[i]-femws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
+                    totFOI_clus = np.sum((ws_ind_perclus[i]>0)*(ws_ind_perclus[i]>femws_ind_perclus[i])*np.minimum(ws_ind_perclus[i]-femws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
                                          np.exp(-gams_ind_perclus[i]*(ws_ind_perclus[i].astype(float)-1.0))/float(np.sum(Nps[spis==uspis[i]])),axis=0)
                     totFOI_clus_mat = np.tensordot(np.ones(np.sum(Nps[spis==uspis[i]])),totFOI_clus,axes=0)
 
