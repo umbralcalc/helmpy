@@ -265,7 +265,7 @@ class helmpy:
             if self.helm_type == 'SCH':
                 # Function which maps from worms to eggs in the standard monogamous mating, density-dependent model for SCH
                 def worm_to_egg_func(wormvals,femwormvals,gamvals):
-                    return (wormvals>0)*(wormvals>femwormvals)*np.minimum(wormvals-femwormvals,femwormvals).astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
+                    return (wormvals>0)*np.minimum(wormvals-femwormvals,femwormvals).astype(float)*(np.exp(-gamvals*(wormvals.astype(float)-1.0)))
 
             # If treatment has been specified, allocate memory
             if self.treatment_times is not None: 
@@ -718,6 +718,10 @@ class helmpy:
                         if treat_ind[len(treat_ind)-1] == True: treat_prevs_perclus.append(np.sum((ws_ind_perclus[i]>0),axis=0).astype(float)/ \
                                                                                            np.sum(Nps[spis==uspis[i]]).astype(float))
 
+                # If considering SCH, ensure consistency of total number of worms and number of female worms
+                if self.helm_type == 'SCH':
+                    ws_ind_perclus[i] = (ws_ind_perclus[i]<=femws_ind_perclus[i])*femws_ind_perclus[i] + (ws_ind_perclus[i]>femws_ind_perclus[i])*ws_ind_perclus[i]
+
                 # Worm uptake event rates
                 urs = lam_ind_perclus[i]*FOIs_ind_perclus[i]*(FOIs_ind_perclus[i]>0.0)
 
@@ -750,8 +754,11 @@ class helmpy:
                     femws_ind_perclus[i] += (randgen_ind_clus < urs/trs)*np.random.binomial(1,0.5,size=randgen_ind_clus.shape) 
                     femws_ind_perclus[i] -= (femws_ind_perclus[i]>0)*(randgen_ind_clus > urs/trs)*(randgen_ind_clus < (urs+femdrs)/trs)
 
+                    # Ensure consistency of total number of worms and number of female worms
+                    ws_ind_perclus[i] = (ws_ind_perclus[i]<=femws_ind_perclus[i])*femws_ind_perclus[i] + (ws_ind_perclus[i]>femws_ind_perclus[i])*ws_ind_perclus[i]
+
                     # Compute the total force of infection within the cluster and convert it into a matrix for calculation
-                    totFOI_clus = np.sum((ws_ind_perclus[i]>0)*(ws_ind_perclus[i]>femws_ind_perclus[i])*np.minimum(ws_ind_perclus[i]-femws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
+                    totFOI_clus = np.sum((ws_ind_perclus[i]>0)*np.minimum(ws_ind_perclus[i]-femws_ind_perclus[i],femws_ind_perclus[i]).astype(float)* \
                                          np.exp(-gams_ind_perclus[i]*(ws_ind_perclus[i].astype(float)-1.0))/float(np.sum(Nps[spis==uspis[i]])),axis=0)
                     totFOI_clus_mat = np.tensordot(np.ones(np.sum(Nps[spis==uspis[i]])),totFOI_clus,axes=0)
 
