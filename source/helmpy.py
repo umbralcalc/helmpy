@@ -113,7 +113,7 @@ class helmpy:
         # Default is that parameters are not needed for simulation comparison to data
         self.default_data_specific_parameters = {
                                                     'KatoKatz':      [],    # Optional choice of lambda_epg (index 0 of list) for Kato-Katz egg count for STH or shisto mansoni data
-                                                    'UrineFil':      [],    # Optional for shisto haematobium data
+                                                    'UrineFil':      [],    # Optional choice of lambda_epml (index 0 of list) for shisto haematobium data
                                                     'qPCR':          [],    # Optional choice of parameters in qPCR data
                                                     'tolerances':    [1.0]  # Optional choice to input a list of tolerances (variances) for Gaussian synthetic likelihood
                                                  }
@@ -909,11 +909,15 @@ class helmpy:
                 print('Now computing and outputting the log likelihood for each realisation and tolerance...')
                 print('                                                                                             ')
             
-            # If Kato-Katz data is specified then compare using the corresponding log likelihood and output results
-            if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
+            # If Kato-Katz or urine filtration data are specified then compare using the corresponding log likelihood and output results
+            if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
+               (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
                 
                 # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
-                lamepg = self.data_specific_parameters['KatoKatz'][0]
+                if len(self.data_specific_parameters['KatoKatz']) > 0: lamepg = self.data_specific_parameters['KatoKatz'][0]
+
+                # The lambda_epml value used to map the mean egg counts from the simulation per ml of urine 
+                if len(self.data_specific_parameters['UrineFil']) > 0: lamepml = self.data_specific_parameters['UrineFil'][0]
 
                 # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
                 tols = self.data_specific_parameters['tolerances']
@@ -930,23 +934,31 @@ class helmpy:
 
                     # Compute the simulated sample mean egg count if STH
                     if self.helm_type == 'STH':
-                         simKatoKatz_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+                         simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
 
                     # Compute the simulated sample mean egg count if schistosomiasis
                     if self.helm_type == 'SCH':
                          femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-                         simKatoKatz_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                for j in range(0,numgroup)]
+
+                         # If mansoni then Kato-Katz
+                         if len(self.data_specific_parameters['KatoKatz']) > 0:
+                             simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                    for j in range(0,numgroup)]
+
+                         # If haematobium then urine filtration
+                         if len(self.data_specific_parameters['UrineFil']) > 0:
+                             simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                    for j in range(0,numgroup)]
 
                     # Obtain the Kato-Katz egg mean values from the data samples
-                    dataKatoKatz_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
+                    datav_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
 
                     # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
                     log10varslike = np.log10(np.asarray(tols))
 
                     # Compute the log likelihood of each realisation
-                    eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(dataKatoKatz_eggmeans[j],np.ones_like(simKatoKatz_eggmean[j]),axes=0)-\
-                                           np.tensordot(np.ones_like(dataKatoKatz_eggmeans[j]),simKatoKatz_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                    eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
+                                           np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
                                            np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
 
                     # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
@@ -1420,8 +1432,9 @@ class helmpy:
 
         if self.suppress_terminal_output == False: print('Now generating posterior samples...')
 
-        # If Kato-Katz data is specified for either STH or schistosomiasis (mansoni) then perform the corresponding fitting procedure
-        if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['qPCR']) == 0:
+        # If Kato-Katz data is specified for either STH or schistosomiasis (mansoni) or urine filtration for schistosomiasis (haematobium) then perform the corresponding fitting procedure
+        if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
+           (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
 
             # Fix the dimensions for all of the groupings
             self.fix_groupings()
