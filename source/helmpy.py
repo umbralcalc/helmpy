@@ -1465,7 +1465,7 @@ class helmpy:
                       ((mean/var)**((((mean**2.0)/(var-mean)))))*(((var-mean)/var)**n))
     
                 # If any overflow problems, use large argument expansion of log negative binomial
-                overflow_vals = np.isnan(sol)
+                overflow_vals = (np.isnan(sol) | np.isinf(sol))
                 overflow_n = n[overflow_vals]
                 sol[overflow_vals] = np.log((((1.0-(mean/var))**overflow_n)*(overflow_n**((mean**2.0/(var-mean))-1.0))* \
                                              ((mean/var)**(mean**2.0/(var-mean)))/(spec.gamma(mean**2.0/(var-mean)))))
