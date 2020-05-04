@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import scipy.special as spec
 import emcee as mc
 import corner
+from getdist import plots, MCSamples
 
 
 # Initialize the 'helmpy' method class
@@ -40,7 +41,8 @@ class helmpy:
         self.source_directory = 'source/'  
 
         # Possible samples from data to compare simulations to
-        self.data_samples = None   
+        self.data_samples_list = []
+        self.data_samples_timepoints_list = []   
 
         if self.helm_type == 'STH':
             # Default is one grouping with the same parameters in cluster '1'
@@ -190,7 +192,9 @@ class helmpy:
                        do_nothing_timescale,       # Set a timescale (in years) short enough such that an individual is expected to stay in the same state
                        output_filename,            # Set a filename for the data to be output in self.output_directory
                        timesteps_snapshot=[],      # Optional - output a snapshot of the worm burdens in each cluster after a specified number of steps in time
+                       timepoints_snapshot=[],     # Optional - output a snapshot of the worm burdens in each cluster at specified points in time
                        res_process_output=False,   # Optional - output the mean and 68 credible region of the infectious reservoir
+                       output_elim_time=False,     # Optional - output time to elimination for each realisation (if not eliminated then outputs endpoint time)
                        mf_migrations=False,        # Optional for STH - use mean field egg count distribution to compute reservoir amplitudes while updating the ensemble mean worm burden
                        mf_migrations_fixed=False   # Optional for STH - the migration pulses are drawn from egg count distributions with parameters fixed to the initial conditions
                        ):
@@ -491,6 +495,14 @@ class helmpy:
         # If treatment has been specified, allocate memory for realisations of the post-last-treatment prevalence per cluster 
         if self.treatment_times is not None: treat_prevs_perclus = []
 
+        # If timepoints are to be stored then set array of them for faster manipulation
+        if len(timepoints_snapshot) != 0: timepoints_snapshot = np.asarray(timepoints_snapshot)
+
+        # If output of time to elimination is specified then store this for each cluster and realisation in an array and keep a record of the first passage indicators
+        if output_elim_time == True: 
+            first_passage = [np.zeros(realisations) for us in uspis]
+            times_to_elimination = [runtime*np.ones(realisations) for us in uspis]
+
         # If migration has been specified, allocate memory for the ensemble means in the previous step to use in generating egg pulses
         if self.migration_mode == True: last_ensM = Ms
 
@@ -522,8 +534,8 @@ class helmpy:
             # Generate an exponentially-distributed timestep
             timestep = np.random.exponential(scale=do_nothing_timescale)
 
-            # If treatment has been specified, store previous time
-            if self.treatment_times is not None: old_time = time
+            # Store the previous timepoint in loop
+            old_time = time
 
             # Update overall time with timestep
             time += timestep    
@@ -849,6 +861,76 @@ class helmpy:
 
                 # If migration has been specified, include egg pulses into the reservoir at the end of the integration step and reset the pulses
                 if self.migration_mode == True: FOIs_ind_perclus[i] += eggpulse_ind_perclus[i]
+
+                # If output of time to elimination is specified then store this for each realisation in an array and keep a record of the first passage indicators
+                if output_elim_time == True: 
+                    eliminated_realisations = np.all((ws_ind_perclus[i]==0.0),axis=0)
+                    times_to_elimination[i][(first_passage[i]==0.0)*eliminated_realisations] = time
+                    first_passage[i][eliminated_realisations] = 1.0
+
+                # If data has been fitted to then compare each simulation run to this and contribute to the total log likelihood for each cluster
+                if len(self.data_samples_list) != 0 and len(self.data_samples_timepoints_list) != 0:
+
+                    # Work out if this is the timepoint to contribute to the likelihood with data
+                    data_samples_ind = (old_time < np.asarray(self.data_samples_timepoints_list))*(np.asarray(self.data_samples_timepoints_list) <= time)
+                    if any(data_samples_ind) == True:
+
+                        if self.suppress_terminal_output == False:
+                            print('Computing the log likelihood for each realisation and tolerance at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))
+                            print('                                                                                             ')
+            
+                        # If Kato-Katz or urine filtration data are specified then compare using the corresponding log likelihood and output results
+                        if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
+                           (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
+                
+                            # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
+                            if len(self.data_specific_parameters['KatoKatz']) > 0: lamepg = self.data_specific_parameters['KatoKatz'][0]
+
+                            # The lambda_epml value used to map the mean egg counts from the simulation per ml of urine 
+                            if len(self.data_specific_parameters['UrineFil']) > 0: lamepml = self.data_specific_parameters['UrineFil'][0]
+
+                            # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
+                            tols = self.data_specific_parameters['tolerances']
+
+                            # Number of groupings in the cluster
+                            numgroup = len(Nps[spis==uspis[i]])
+
+                            # Compute the simulated worm and Kato-Katz egg mean for each grouping and realisation
+                            ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
+                            gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
+
+                            # Compute the simulated sample mean egg count if STH
+                            if self.helm_type == 'STH':
+                                simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+
+                            # Compute the simulated sample mean egg count if schistosomiasis
+                            if self.helm_type == 'SCH':
+                                femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
+
+                                # If mansoni then Kato-Katz
+                                if len(self.data_specific_parameters['KatoKatz']) > 0:
+                                    simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                            for j in range(0,numgroup)]
+
+                                # If haematobium then urine filtration
+                                if len(self.data_specific_parameters['UrineFil']) > 0:
+                                    simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                            for j in range(0,numgroup)]
+
+                            # Obtain the Kato-Katz egg mean values from the data samples
+                            datav_eggmeans = [self.data_samples_list[np.arange(0,len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][:,j] for j in range(0,numgroup)]
+
+                            # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
+                            log10varslike = np.log10(np.asarray(tols))
+
+                            # Compute the log likelihood of each realisation
+                            eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
+                                                   np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                                                   np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
+
+                            # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
+                            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) \
+                                                                                                   + '_timepoint_' + str(np.round(time,2)) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
         
             # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
@@ -862,7 +944,7 @@ class helmpy:
             output_data.append(output_list)
             if res_process_output == True: output_res_data.append(output_res_list)
 
-            # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time - filename contains time elapsed in years
+            # Output a snapshot of the worm burdens in each cluster after each specified number of steps in time - filename contains time elapsed in years up to 2 decimal places
             if len(timesteps_snapshot) != 0:
                 if any(count_steps == tts for tts in timesteps_snapshot):
 
@@ -874,9 +956,26 @@ class helmpy:
                                    str(uspis[i]) + '.txt', ws_ind_perclus[i].T, delimiter='\t')
 
                         # Due to Poissonian event draws, exact time of snapshot changes and is hence output for user records and comparison
-                        if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))         
+                        if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))
 
-        if self.data_samples is None and self.suppress_terminal_output == False: print('\n')
+            # Output a snapshot of the worm burdens in each cluster at specified timepoints - filename contains time elapsed in years up to 2 decimal places
+            if len(timepoints_snapshot) != 0:
+
+                # Check using indicator if it is time to output snapshot
+                snapshot_time_ind = (old_time < timepoints_snapshot)*(timepoints_snapshot <= time)
+                if any(snapshot_time_ind) == True:
+
+                    # Loop over each cluster
+                    for i in range(0,numclus):
+
+                        # Output the data to a tab-delimited .txt file in the specified output directory
+                        np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_snapshot_timepoint_' + \
+                                   str(timepoints_snapshot[snapshot_time_ind==True]) + '_cluster_' + str(uspis[i]) + '.txt', ws_ind_perclus[i].T, delimiter='\t')
+
+                        # Due to Poissonian event draws, exact time of snapshot changes and is hence output for user records and comparison
+                        if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))        
+
+        if len(self.data_samples_list) == 0 and self.suppress_terminal_output == False: print('\n')
 
         # It treatment has been specified, output the post-last treatment realisations per cluster in specified file names
         if self.treatment_times is not None:
@@ -902,8 +1001,12 @@ class helmpy:
         if res_process_output == True:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_reservoir.txt',output_res_data,delimiter='\t')
 
+        # Output times to elimination in each cluster to a tab-delimited .txt file in the specified output directory, if specified
+        if output_elim_time == True: 
+            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_times_to_elim.txt',np.asarray(times_to_elimination).T,delimiter='\t')
+
         # If data has been fitted to then compare each simulation run to this and output the log likelihood of using each tolerance in a tab-delimited .txt file for each cluster
-        if self.data_samples is not None:
+        if len(self.data_samples_list) != 0 and len(self.data_samples_timepoints_list) == 0:
 
             if self.suppress_terminal_output == False:
                 print('Now computing and outputting the log likelihood for each realisation and tolerance...')
@@ -934,24 +1037,24 @@ class helmpy:
 
                     # Compute the simulated sample mean egg count if STH
                     if self.helm_type == 'STH':
-                         simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+                        simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
 
                     # Compute the simulated sample mean egg count if schistosomiasis
                     if self.helm_type == 'SCH':
-                         femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
+                        femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
 
-                         # If mansoni then Kato-Katz
-                         if len(self.data_specific_parameters['KatoKatz']) > 0:
-                             simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                        # If mansoni then Kato-Katz
+                        if len(self.data_specific_parameters['KatoKatz']) > 0:
+                            simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
                                                     for j in range(0,numgroup)]
 
-                         # If haematobium then urine filtration
-                         if len(self.data_specific_parameters['UrineFil']) > 0:
-                             simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                        # If haematobium then urine filtration
+                        if len(self.data_specific_parameters['UrineFil']) > 0:
+                            simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
                                                     for j in range(0,numgroup)]
 
                     # Obtain the Kato-Katz egg mean values from the data samples
-                    datav_eggmeans = [self.data_samples[:,j] for j in range(0,numgroup)]
+                    datav_eggmeans = [self.data_samples_list[0][:,j] for j in range(0,numgroup)]
 
                     # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
                     log10varslike = np.log10(np.asarray(tols))
@@ -1072,7 +1175,7 @@ class helmpy:
         # Fix the dimensions for all of the groupings
         self.fix_groupings()
 
-        if self.helm_type == 'STH':
+        if self.helm_type == 'STH' or self.helm_type == 'SCH':
 
             # Set parameter values, initial conditions and cluster references for each realisation
             mus = np.asarray(self.parameter_dictionary['mu'])
@@ -1094,7 +1197,8 @@ class helmpy:
             numclus = len(uspis)
 
             if self.suppress_terminal_output == False: 
-                print('Soil-transmitted helminth mode enabled')
+                if self.helm_type == 'STH': print('Soil-transmitted helminth mode enabled')
+                if self.helm_type == 'SCH': print('Schistosome mode enabled')
                 print('                                      ')
                 print('Setting initial conditions...')
 
@@ -1104,13 +1208,34 @@ class helmpy:
                 # Extract mean worm burdens and forces of infection and calculate first moment of egg count in the presence of sexual reproduction
                 oldMs = MsFOIs[:int(len(MsFOIs)/2)]
                 oldFOIs = MsFOIs[int(len(MsFOIs)/2):]
-                oldfs = (1.0+((1.0-zs)*oldMs/ks))**(-ks-1.0)
-                oldphis = 1.0 - (((1.0+((1.0-zs)*(oldMs)/ks))/(1.0+((2.0-zs)*(oldMs)/(2.0*ks))))**(ks+1.0))
-                oldFOItots = np.asarray([np.sum((Nps.astype(float)*oldphis*oldfs*oldMs)[spi==spis])/np.sum(Nps[spi==spis].astype(float)) for spi in spis])
 
-                # Use old values to compute new first derivatives in time for the mean field system in each cluster to evolve
-                newMsderiv = oldFOIs - ((mus+mu1s)*oldMs)
-                newFOIsderiv = mu2s*(((mus+mu1s)*R0s*oldFOItots)-oldFOIs)
+                # If using STH then evolve using polygamous mating function
+                if self.helm_type == 'STH':
+                    oldfs = (1.0+((1.0-zs)*oldMs/ks))**(-ks-1.0)
+                    oldphis = 1.0 - (((1.0+((1.0-zs)*(oldMs)/ks))/(1.0+((2.0-zs)*(oldMs)/(2.0*ks))))**(ks+1.0))
+                    oldFOItots = np.asarray([np.sum((Nps.astype(float)*oldphis*oldfs*oldMs)[spi==spis])/np.sum(Nps[spi==spis].astype(float)) for spi in spis])
+
+                    # Use old values to compute new first derivatives in time for the mean field system in each cluster to evolve
+                    newMsderiv = oldFOIs - ((mus+mu1s)*oldMs)
+                    newFOIsderiv = mu2s*(((mus+mu1s)*R0s*oldFOItots)-oldFOIs)
+
+                # If using SCH then evolve using monogamous mating function
+                if self.helm_type == 'SCH':
+                    var = Ms + (Ms**2.0/ks)
+                    Ms_matrix = np.tensordot(Ms,np.ones(1000),axes=0)
+                    var_matrix = np.tensordot(var,np.ones(1000),axes=0)
+                    zs_matrix = np.tensordot(zs,np.ones(1000),axes=0)
+
+                    # Estimate first egg moment with monogamous mating using samples (could also use integral of hypergeometric function) - not analytically tractable otherwise 
+                    totworms = np.random.negative_binomial(Ms_matrix**2.0/np.abs(var_matrix-Ms_matrix),Ms_matrix/var_matrix,size=(len(Ms),1000))
+                    femworms = np.random.binomial(totworms,0.5*np.ones((len(Ms),1000)),size=(len(Ms),1000))
+                    oldfirst_egg_moms = np.sum((totworms>0)*np.minimum(femworms,totworms-femworms).astype(float)*\
+                                               (zs_matrix**(totworms.astype(float)-1.0)),axis=1)/1000.0
+                    oldFOItots = np.asarray([np.sum((Nps.astype(float)*oldfirst_egg_moms)[spi==spis])/np.sum(Nps[spi==spis].astype(float)) for spi in spis])
+
+                    # Use old values to compute new first derivatives in time for the mean field system in each cluster to evolve
+                    newMsderiv = oldFOIs - ((mus+mu1s)*oldMs)
+                    newFOIsderiv = mu2s*(((mus+mu1s)*R0s*oldFOItots)-oldFOIs)
                 
                 return np.append(newMsderiv,newFOIsderiv)   
 
@@ -1144,12 +1269,33 @@ class helmpy:
                 Ms = Ms*(Ms>0.0)
                 FOIs = FOIs*(FOIs>0.0)
 
-                # Sum over egg counts distribution moments and variances in each age bin
-                Eggfirstmom = Nps.astype(float)*Ms*(((1.0+((1.0-zs)*Ms/ks))**(-ks-1.0))-((1.0+((1.0-(zs/2.0))*Ms/ks))**(-ks-1.0)))
-                Eggsecondmom = ((Nps.astype(float))**2.0)*(((Ms+(((zs**2.0)+(1.0/ks))*(Ms**2.0)))/((1.0+((1.0-(zs**2.0))*Ms/ks))**(ks+2.0))) + \
-                               ((Ms+(((zs**2.0/4.0)+(1.0/ks))*(Ms**2.0)))/((1.0+((1.0-(zs**2.0/4.0))*Ms/ks))**(ks+2.0))) - \
-                               ((Ms+(((zs**2.0)+(2.0/ks))*(Ms**2.0)))/((1.0+((1.0-(zs**2.0/2.0))*Ms/ks))**(ks+2.0))))  
-                Eggvariance = Eggsecondmom - (Eggfirstmom**2.0) 
+                # If using STH then compute egg variance estimate analytically
+                if self.helm_type == 'STH':
+
+                    # Sum over egg counts distribution moments and variances in each age bin
+                    Eggfirstmom = Nps.astype(float)*Ms*(((1.0+((1.0-zs)*Ms/ks))**(-ks-1.0))-((1.0+((1.0-(zs/2.0))*Ms/ks))**(-ks-1.0)))
+                    Eggsecondmom = ((Nps.astype(float))**2.0)*(((Ms+(((zs**2.0)+(1.0/ks))*(Ms**2.0)))/((1.0+((1.0-(zs**2.0))*Ms/ks))**(ks+2.0))) + \
+                                   ((Ms+(((zs**2.0/4.0)+(1.0/ks))*(Ms**2.0)))/((1.0+((1.0-(zs**2.0/4.0))*Ms/ks))**(ks+2.0))) - \
+                                   ((Ms+(((zs**2.0)+(2.0/ks))*(Ms**2.0)))/((1.0+((1.0-(zs**2.0/2.0))*Ms/ks))**(ks+2.0))))  
+                    Eggvariance = Eggsecondmom - (Eggfirstmom**2.0) 
+
+                # If using SCH then compute egg variance estimate with samples
+                if self.helm_type == 'SCH':
+
+                    var = Ms + (Ms**2.0/ks)
+                    Ms_matrix = np.tensordot(Ms,np.ones(1000),axes=0)
+                    var_matrix = np.tensordot(var,np.ones(1000),axes=0)
+                    zs_matrix = np.tensordot(zs,np.ones(1000),axes=0)
+
+                    # Estimate first egg moment with monogamous mating using samples (could also use integral of hypergeometric function) - not analytically tractable otherwise 
+                    totworms = np.random.negative_binomial(Ms_matrix**2.0/np.abs(var_matrix-Ms_matrix),Ms_matrix/var_matrix,size=(len(Ms),1000))
+                    femworms = np.random.binomial(totworms,0.5*np.ones((len(Ms),1000)),size=(len(Ms),1000))
+                    eggs = (totworms>0)*np.minimum(femworms,totworms-femworms).astype(float)*(zs_matrix**(totworms.astype(float)-1.0))
+
+                    # Sum over egg counts distribution moments and variances in each age bin
+                    Eggfirstmom = Nps.astype(float)*np.sum(eggs,axis=1)/1000.0
+                    Eggsecondmom = ((Nps.astype(float))**2.0)*np.sum(eggs**2.0,axis=1)/1000.0
+                    Eggvariance = Eggsecondmom - (Eggfirstmom**2.0) 
 
                 # Sum over egg counts distribution moments and variances per cluster
                 SumEggfirstmom = [np.sum(Eggfirstmom[spi==spis]) for spi in uspis]
@@ -1198,7 +1344,7 @@ class helmpy:
                             realisations,               # Set the number of stochastic realisations for the model
                             timestep,                   # Set a timestep to evolve the deterministic mean field
                             output_filename,            # Set a filename for the data to be output in self.output_directory
-                            timesteps_snapshot=[],      # Optional - output a snapshot of the mean worm burdens in each cluster after a specified number of steps in time
+                            timesteps_snapshot=[]       # Optional - output a snapshot of the mean worm burdens in each cluster after a specified number of steps in time
                             ):
         
         # Terminal front page when code runs...
@@ -1424,7 +1570,8 @@ class helmpy:
                  output_corner_plot=True,      # Boolean for corner plot of the mean and variance posterior fits with: https://corner.readthedocs.io/en/latest/ - default is to output
                  plot_labels=[],               # If corner plot is generated then this is an option to list a set of variable names (strings) in the same order as walker_initconds
                  num_walkers=100,              # Change the number of walkers used by the ensemble MC sampler - default is 100 which works fine in most cases  
-                 num_iterations=500            # Change the number of iterations used by the ensemble MC sampler - default is 500 which works fine in most cases
+                 num_iterations=500,           # Change the number of iterations used by the ensemble MC sampler - default is 500 which works fine in most cases
+                 timepoint=None                # Option to attribute a point in time to the data for the simulation to compare to - default assumes this occurs at the end
                  ):
 
         # Terminal front page when code runs...
@@ -1519,23 +1666,21 @@ class helmpy:
             samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
         
             # Find maximum likelihood parameters and print them to screen
-            maxlnlike = -np.inf
-            maxlnlike_params = samples[0]
-            for sn in range(0,len(samples)):
-                if maxlnlike < loglike(samples[sn]):
-                    maxlnlike = loglike(samples[sn])
-                    maxlnlike_params = samples[sn]
+            lnlike_samples = sampler.get_log_prob()[50:, :].flatten()
+            maxlnlike = np.max(lnlike_samples)
+            maxlnlike_params = samples[np.argmax(lnlike_samples)]
             print('Maxlnlike: ' + str(maxlnlike))
             print('Maxlnlike parameters: ' + str(maxlnlike_params))
             print('                                              ')
 
             # Set the data samples for comparison with simulations
-            self.data_samples = samples
+            self.data_samples_list.append(samples)
+            if timepoint is not None: self.data_samples_timepoints_list.append(timepoint)
 
             # Save samples to text data file in self.output_directory
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
 
-            # If corner plot has been specified then generate this with: https://corner.readthedocs.io/en/latest/
+            # If corner plot has been specified then generate this with: https://getdist.readthedocs.io/en/latest/
             if output_corner_plot == True: 
 
                 # Generate the appropriate plot labels if not already specified
@@ -1547,7 +1692,17 @@ class helmpy:
                     # For lnvar... 
                     plot_labels.append("ln-Variance")
 
-                corner.corner(samples, labels=plot_labels)
+                # Initialise GetDist MC samples
+                samples = MCSamples(samples = samples,names = plot_labels, labels = plot_labels) 
+
+                # Set fontsize settings
+                g = plots.get_subplot_plotter()
+                g.settings.legend_fontsize=15
+                g.settings.axes_fontsize=15
+                g.settings.lab_fontsize=15
+
+                # Generate corner plot
+                g.triangle_plot(samples, filled=True)
 
                 # Output figure to plots directory
                 plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
