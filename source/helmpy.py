@@ -1682,6 +1682,15 @@ class helmpy:
 
             # If corner plot has been specified then generate this with: https://getdist.readthedocs.io/en/latest/
             if output_corner_plot == True: 
+                
+                # Set arbitrary name labels for GetDist
+                name_labels = []     
+                
+                # For means...
+                for i in range(0,numdat): name_labels.append('m' + str(i))
+                
+                # For lnvar...
+                name_labels.append('v')
 
                 # Generate the appropriate plot labels if not already specified
                 if len(plot_labels) == 0:
@@ -1693,7 +1702,7 @@ class helmpy:
                     plot_labels.append("ln-Variance")
 
                 # Initialise GetDist MC samples
-                samples = MCSamples(samples = samples,names = plot_labels, labels = plot_labels) 
+                gd_samples = MCSamples(samples=samples,names=name_labels,labels=plot_labels) 
 
                 # Set fontsize settings
                 g = plots.get_subplot_plotter()
@@ -1702,7 +1711,7 @@ class helmpy:
                 g.settings.lab_fontsize=15
 
                 # Generate corner plot
-                g.triangle_plot(samples, filled=True)
+                g.triangle_plot(gd_samples, filled=True)
 
                 # Output figure to plots directory
                 plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
