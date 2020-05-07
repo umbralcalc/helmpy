@@ -724,7 +724,7 @@ class helmpy:
 
                         # Output the exact time of treatment implementation unless otherwise suppressed
                         if self.suppress_terminal_output == False: print('Treatment ' + str(np.arange(1,len(treat_ind)+1,1)[treat_ind==True][0]) + \
-                                                                         ' implemented: ' + str(np.round(time,2)) + ' years')
+                                                                         ' implemented: ' + str(np.asarray(self.treatment_times)[treat_ind==True][0]) + ' years')
 
                         # Store the post-treatment prevalence in each cluster if the last treatment has just been performed
                         if treat_ind[len(treat_ind)-1] == True: treat_prevs_perclus.append(np.sum((ws_ind_perclus[i]>0),axis=0).astype(float)/ \
@@ -876,7 +876,8 @@ class helmpy:
                     if any(data_samples_ind) == True:
 
                         if self.suppress_terminal_output == False:
-                            print('Computing the log likelihood for each realisation and tolerance at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))
+                            print('Computing the log likelihood for each realisation and tolerance at time t = ' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + \
+                                  ' years for cluster ' + str(uspis[i]))
                             print('                                                                                             ')
             
                         # If Kato-Katz or urine filtration data are specified then compare using the corresponding log likelihood and output results
@@ -929,8 +930,8 @@ class helmpy:
                                                    np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
 
                             # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
-                            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) \
-                                                                                                   + '_timepoint_' + str(np.round(time,2)) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
+                            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + \
+                                       '_timepoint_' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
         
             # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
@@ -970,10 +971,11 @@ class helmpy:
 
                         # Output the data to a tab-delimited .txt file in the specified output directory
                         np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_snapshot_timepoint_' + \
-                                   str(timepoints_snapshot[snapshot_time_ind==True]) + '_cluster_' + str(uspis[i]) + '.txt', ws_ind_perclus[i].T, delimiter='\t')
+                                   str(timepoints_snapshot[snapshot_time_ind==True][0]) + '_cluster_' + str(uspis[i]) + '.txt', ws_ind_perclus[i].T, delimiter='\t')
 
                         # Due to Poissonian event draws, exact time of snapshot changes and is hence output for user records and comparison
-                        if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + str(np.round(time,2)) + ' years for cluster ' + str(uspis[i]))        
+                        if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + \
+                           str(timepoints_snapshot[snapshot_time_ind==True][0]) + ' years for cluster ' + str(uspis[i]))        
 
         if len(self.data_samples_list) == 0 and self.suppress_terminal_output == False: print('\n')
 
