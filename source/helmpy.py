@@ -114,8 +114,8 @@ class helmpy:
 
         # Default is that parameters are not needed for simulation comparison to data
         self.default_data_specific_parameters = {
-                                                    'KatoKatz':      [],    # Optional choice of lambda_epg (index 0 of list) for Kato-Katz egg count for STH or shisto mansoni data
-                                                    'UrineFil':      [],    # Optional choice of lambda_epml (index 0 of list) for shisto haematobium data
+                                                    'KatoKatz':      [],    # Optional choice of lambda_epg/24 (index 0 of list) for Kato-Katz egg count for STH or shisto mansoni data
+                                                    'UrineFil':      [],    # Optional choice of lambda_epml/24 (index 0 of list) for shisto haematobium data
                                                     'qPCR':          [],    # Optional choice of parameters in qPCR data
                                                     'tolerances':    [1.0]  # Optional choice to input a list of tolerances (variances) for Gaussian synthetic likelihood
                                                  }
@@ -884,10 +884,10 @@ class helmpy:
                         if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
                            (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
                 
-                            # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
+                            # The lambda_epg/24 value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
                             if len(self.data_specific_parameters['KatoKatz']) > 0: lamepg = self.data_specific_parameters['KatoKatz'][0]
 
-                            # The lambda_epml value used to map the mean egg counts from the simulation per ml of urine 
+                            # The lambda_epml/24 value used to map the mean egg counts from the simulation per ml of urine 
                             if len(self.data_specific_parameters['UrineFil']) > 0: lamepml = self.data_specific_parameters['UrineFil'][0]
 
                             # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
@@ -1018,10 +1018,10 @@ class helmpy:
             if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
                (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
                 
-                # The lambda_epg value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
+                # The lambda_epg/24 value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
                 if len(self.data_specific_parameters['KatoKatz']) > 0: lamepg = self.data_specific_parameters['KatoKatz'][0]
 
-                # The lambda_epml value used to map the mean egg counts from the simulation per ml of urine 
+                # The lambda_epml/24 value used to map the mean egg counts from the simulation per ml of urine 
                 if len(self.data_specific_parameters['UrineFil']) > 0: lamepml = self.data_specific_parameters['UrineFil'][0]
 
                 # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
