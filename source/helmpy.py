@@ -42,7 +42,15 @@ class helmpy:
 
         # Possible samples from data to compare simulations to
         self.data_samples_list = []
-        self.data_samples_timepoints_list = []   
+        self.data_samples_prevalences_list = []
+        self.data_samples_timepoints_list = [] 
+
+        # Set a false negative rate and threshold (integer) number of worms below which the this rate applies -
+        # this is for use only in prevalence-based inference (in conjunction with self.data_samples_prevalences_list)
+        self.FN_rate_and_thresh = [0.15,5] # Set default of 15% below 5 worms
+
+        # Internal sample size number used for prevalence summary statistic likelihood - shouldn't need changing beyond 1000 given a binomial
+        self.prev_data_sample_size = 1000
 
         if self.helm_type == 'STH':
             # Default is one grouping with the same parameters in cluster '1'
@@ -869,7 +877,7 @@ class helmpy:
                     first_passage[i][eliminated_realisations] = 1.0
 
                 # If data has been fitted to then compare each simulation run to this and contribute to the total log likelihood for each cluster
-                if len(self.data_samples_list) != 0 and len(self.data_samples_timepoints_list) != 0:
+                if (len(self.data_samples_list) != 0 or len(self.data_samples_prevalences_list) != 0) and len(self.data_samples_timepoints_list) != 0:
 
                     # Work out if this is the timepoint to contribute to the likelihood with data
                     data_samples_ind = (old_time < np.asarray(self.data_samples_timepoints_list))*(np.asarray(self.data_samples_timepoints_list) <= time)
@@ -900,38 +908,70 @@ class helmpy:
                             ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
                             gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
 
-                            # Compute the simulated sample mean egg count if STH
+                            # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if STH
                             if self.helm_type == 'STH':
-                                simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+                                if len(self.data_samples_list) != 0:
+                                    simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+                                if len(self.data_samples_prevalences_list) != 0:
+                                    simul_eggnum = [np.sum(((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j])>0.0)*\
+                                                           ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
+                                                           ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
+                                                           size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
 
-                            # Compute the simulated sample mean egg count if schistosomiasis
+                            # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if schistosomiasis
                             if self.helm_type == 'SCH':
                                 femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
 
                                 # If mansoni then Kato-Katz
                                 if len(self.data_specific_parameters['KatoKatz']) > 0:
-                                    simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                            for j in range(0,numgroup)]
+                                    if len(self.data_samples_list) != 0:
+                                        simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                                for j in range(0,numgroup)]
+                                    if len(self.data_samples_prevalences_list) != 0:
+                                        simul_eggnum = [np.sum((lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
+                                                              ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
+                                                              ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
+                                                              size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
 
                                 # If haematobium then urine filtration
                                 if len(self.data_specific_parameters['UrineFil']) > 0:
-                                    simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                            for j in range(0,numgroup)]
+                                    if len(self.data_samples_list) != 0:
+                                        simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                                for j in range(0,numgroup)]
+                                    if len(self.data_samples_prevalences_list) != 0:
+                                        simul_eggnum = [np.sum((lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
+                                                              ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
+                                                              ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
+                                                              size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
 
-                            # Obtain the Kato-Katz egg mean values from the data samples
-                            datav_eggmeans = [self.data_samples_list[np.arange(0,len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][:,j] for j in range(0,numgroup)]
+                            # Obtain the Kato-Katz egg mean values from the data samples or number of infected from prevalence data in each age bin at the appropriate timepoint
+                            if len(self.data_samples_list) != 0:
+                                datav_eggmeans = [self.data_samples_list[np.arange(0,len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][:,j] for j in range(0,numgroup)]
+                            if len(self.data_samples_prevalences_list) != 0:
+                                datav_eggnums = [np.random.binomial(Nps[spis==uspis[i]][j],self.data_samples_prevalences_list[np.arange(0,\
+                                                 len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][j],size=self.prev_data_sample_size) for j in range(0,numgroup)]
 
                             # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
                             log10varslike = np.log10(np.asarray(tols))
 
                             # Compute the log likelihood of each realisation
-                            eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
-                                                   np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                                   np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
+                            if len(self.data_samples_list) != 0:
+                                eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
+                                                       np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                                                       np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
 
-                            # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
-                            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + \
-                                       '_timepoint_' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
+                                # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
+                                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + \
+                                           '_timepoint_' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
+   
+                            if len(self.data_samples_prevalences_list) != 0:
+                                eggnum_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggnums[j],np.ones_like(simul_eggnum[j]),axes=0)-\
+                                                      np.tensordot(np.ones_like(datav_eggnums[j]),simul_eggnum[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                                                      np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
+
+                                # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
+                                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + \
+                                           '_timepoint_' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + '.txt',eggnum_lnlikelihood.T,delimiter='\t')
         
             # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
@@ -977,7 +1017,7 @@ class helmpy:
                         if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + \
                            str(timepoints_snapshot[snapshot_time_ind==True][0]) + ' years for cluster ' + str(uspis[i]))        
 
-        if len(self.data_samples_list) == 0 and self.suppress_terminal_output == False: print('\n')
+        if len(self.data_samples_list) == 0 and len(self.data_samples_prevalences_list) == 0 and self.suppress_terminal_output == False: print('\n')
 
         # It treatment has been specified, output the post-last treatment realisations per cluster in specified file names
         if self.treatment_times is not None:
@@ -1008,7 +1048,7 @@ class helmpy:
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_times_to_elim.txt',np.asarray(times_to_elimination).T,delimiter='\t')
 
         # If data has been fitted to then compare each simulation run to this and output the log likelihood of using each tolerance in a tab-delimited .txt file for each cluster
-        if len(self.data_samples_list) != 0 and len(self.data_samples_timepoints_list) == 0:
+        if len(self.data_samples_list) != 0 and len(self.data_samples_prevalences_list) != 0 and len(self.data_samples_timepoints_list) == 0:
 
             if self.suppress_terminal_output == False:
                 print('Now computing and outputting the log likelihood for each realisation and tolerance...')
@@ -1037,37 +1077,70 @@ class helmpy:
                     ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
                     gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
 
-                    # Compute the simulated sample mean egg count if STH
+                    # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if STH
                     if self.helm_type == 'STH':
-                        simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+                        if len(self.data_samples_list) != 0:
+                            simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
+                        if len(self.data_samples_prevalences_list) != 0:
+                            simul_eggnum = [np.sum(((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j])>0.0)*\
+                                                   ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
+                                                   ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
+                                                   size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
 
-                    # Compute the simulated sample mean egg count if schistosomiasis
+                    # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if schistosomiasis
                     if self.helm_type == 'SCH':
                         femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
 
                         # If mansoni then Kato-Katz
                         if len(self.data_specific_parameters['KatoKatz']) > 0:
-                            simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                    for j in range(0,numgroup)]
+                            if len(self.data_samples_list) != 0:
+                                simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                        for j in range(0,numgroup)]
+                            if len(self.data_samples_prevalences_list) != 0:
+                                simul_eggnum = [np.sum((lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
+                                                      ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
+                                                      ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
+                                                      size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
 
                         # If haematobium then urine filtration
                         if len(self.data_specific_parameters['UrineFil']) > 0:
-                            simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                    for j in range(0,numgroup)]
+                            if len(self.data_samples_list) != 0:
+                                simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
+                                                        for j in range(0,numgroup)]
+                            if len(self.data_samples_prevalences_list) != 0:
+                                simul_eggnum = [np.sum((lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
+                                                      ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
+                                                      ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
+                                                      size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
 
-                    # Obtain the Kato-Katz egg mean values from the data samples
-                    datav_eggmeans = [self.data_samples_list[0][:,j] for j in range(0,numgroup)]
+                    # Obtain the Kato-Katz egg mean values from the data samples or number of infected from prevalence data in each age bin at the appropriate timepoint
+                    if len(self.data_samples_list) != 0:
+                        datav_eggmeans = [self.data_samples_list[np.arange(0,len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][:,j] for j in range(0,numgroup)]
+                    if len(self.data_samples_prevalences_list) != 0:
+                        datav_eggnums = [np.random.binomial(Nps[spis==uspis[i]][j],self.data_samples_prevalences_list[np.arange(0,\
+                                         len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][j],size=self.prev_data_sample_size) for j in range(0,numgroup)]
 
                     # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
                     log10varslike = np.log10(np.asarray(tols))
 
                     # Compute the log likelihood of each realisation
-                    eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
-                                           np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                           np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
+                    if len(self.data_samples_list) != 0:
+                        eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
+                                               np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                                               np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
 
-                    # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
-                    np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
+                        # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
+                        np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',\
+                                   eggmean_lnlikelihood.T,delimiter='\t')
+
+                    if len(self.data_samples_prevalences_list) != 0:
+                        eggnum_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggnums[j],np.ones_like(simul_eggnum[j]),axes=0)-\
+                                              np.tensordot(np.ones_like(datav_eggnums[j]),simul_eggnum[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
+                                              np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
+
+                        # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
+                        np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',\
+                                   eggnum_lnlikelihood.T,delimiter='\t')
 
             if self.suppress_terminal_output == False: print('\n')
 
