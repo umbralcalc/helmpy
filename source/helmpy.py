@@ -1277,8 +1277,8 @@ class helmpy:
                 print('                                      ')
                 print('Setting initial conditions...')
 
-            # Define the mean-field deterministic system of differential equations to govern the STH transmission dynamics
-            def meanfield_STHsystem(time,MsFOIs):
+            # Define the mean-field deterministic system of differential equations to govern the transmission dynamics
+            def meanfield_system(time,MsFOIs):
 
                 # Extract mean worm burdens and forces of infection and calculate first moment of egg count in the presence of sexual reproduction
                 oldMs = MsFOIs[:int(len(MsFOIs)/2)]
@@ -1336,7 +1336,7 @@ class helmpy:
             while time < runtime:
 
                 # Update mean worm burdens and forces of infection with dynamics
-                MsFOIs += meanfield_STHsystem(time,MsFOIs)*timestep
+                MsFOIs += meanfield_system(time,MsFOIs)*timestep
                 Ms = MsFOIs[:int(len(MsFOIs)/2)]
                 FOIs = MsFOIs[int(len(MsFOIs)/2):]  
 
