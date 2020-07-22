@@ -1241,7 +1241,9 @@ class helmpy:
     def run_meanfield(self,
                       runtime,                  # Set the total time of the run in years
                       timestep,                 # Set a timestep to evolve the deterministic mean field
-                      output_filename           # Set a filename for the data to be output in self.output_directory
+                      output_filename,          # Set a filename for the data to be output in self.output_directory
+                      just_a_function=False,    # Optional - run the method as just a function where there is no file writing and returns result as a function
+                      output_mean_groups=False  # Optional - output includes just the ensemble mean result stratified by all of the groupings
                       ):
         
         # Terminal front page when code runs...
@@ -1345,7 +1347,7 @@ class helmpy:
                 FOIs = FOIs*(FOIs>0.0)
 
                 # If using STH then compute egg variance estimate analytically
-                if self.helm_type == 'STH':
+                if self.helm_type == 'STH' and output_mean_groups == False:
 
                     # Sum over egg counts distribution moments and variances in each age bin
                     Eggfirstmom = Nps.astype(float)*Ms*(((1.0+((1.0-zs)*Ms/ks))**(-ks-1.0))-((1.0+((1.0-(zs/2.0))*Ms/ks))**(-ks-1.0)))
@@ -1355,7 +1357,7 @@ class helmpy:
                     Eggvariance = Eggsecondmom - (Eggfirstmom**2.0) 
 
                 # If using SCH then compute egg variance estimate with samples
-                if self.helm_type == 'SCH':
+                if self.helm_type == 'SCH' and output_mean_groups == False:
 
                     var = Ms + (Ms**2.0/ks)
                     Ms_matrix = np.tensordot(Ms,np.ones(1000),axes=0)
@@ -1372,28 +1374,35 @@ class helmpy:
                     Eggsecondmom = ((Nps.astype(float))**2.0)*np.sum(eggs**2.0,axis=1)/1000.0
                     Eggvariance = Eggsecondmom - (Eggfirstmom**2.0) 
 
-                # Sum over egg counts distribution moments and variances per cluster
-                SumEggfirstmom = [np.sum(Eggfirstmom[spi==spis]) for spi in uspis]
-                SumEggsecondmom = [np.sum(Eggsecondmom[spi==spis]) for spi in uspis]
-                SumEggvariance = [np.sum(Eggvariance[spi==spis]) for spi in uspis]
+                # If outputting the ensemble variance too then perform integrals
+                if output_mean_groups == False:
+                
+                    # Sum over egg counts distribution moments and variances per cluster
+                    SumEggfirstmom = [np.sum(Eggfirstmom[spi==spis]) for spi in uspis]
+                    SumEggsecondmom = [np.sum(Eggsecondmom[spi==spis]) for spi in uspis]
+                    SumEggvariance = [np.sum(Eggvariance[spi==spis]) for spi in uspis]
 
-                # Compute the ensemble mean and variance of the sum of all individual mean worm burdens in each age bin
-                Integrandmean = [(Integrandmean[spii]*np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*timestep)) + \
-                                 ((Nps[uspis[spii]==spis].astype(float)*(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*SumEggfirstmom[spii]*R0s[uspis[spii]==spis]/ \
-                                 np.sum(Nps[uspis[spii]==spis].astype(float)))*timestep) for spii in range(0,numclus)]
+                    # Compute the ensemble mean and variance of the sum of all individual mean worm burdens in each age bin
+                    Integrandmean = [(Integrandmean[spii]*np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*timestep)) + \
+                                     ((Nps[uspis[spii]==spis].astype(float)*(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*SumEggfirstmom[spii]*R0s[uspis[spii]==spis]/ \
+                                     np.sum(Nps[uspis[spii]==spis].astype(float)))*timestep) for spii in range(0,numclus)]
 
-                Integrandsecondmom = [Nps[uspis[spii]==spis].astype(float)*(Ms[uspis[spii]==spis]**2.0)*np.exp(-2.0*(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time) - 
-                                      2.0*Nps[uspis[spii]==spis].astype(float)*(Ms[uspis[spii]==spis]*(SumEggfirstmom[spii]* \
-                                      R0s[uspis[spii]==spis]/np.sum(Nps[uspis[spii]==spis].astype(float))))* \
-                                      (np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time)-np.exp(-2.0*(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time)) +
-                                      ((Nps[uspis[spii]==spis].astype(float))*(1.0+(1.0/ks[uspis[spii]==spis]))* \
-                                      (((1.0-np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time))/(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis]))**2.0)* \
-                                      (((mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])**2.0)*(SumEggsecondmom[spii] + \
-                                      SumEggvariance[spii])*(R0s[uspis[spii]==spis]**2.0)/(np.sum(Nps[uspis[spii]==spis].astype(float)))**2.0)) for spii in range(0,numclus)]
+                    Integrandsecondmom = [Nps[uspis[spii]==spis].astype(float)*(Ms[uspis[spii]==spis]**2.0)*np.exp(-2.0*(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time) - 
+                                          2.0*Nps[uspis[spii]==spis].astype(float)*(Ms[uspis[spii]==spis]*(SumEggfirstmom[spii]* \
+                                          R0s[uspis[spii]==spis]/np.sum(Nps[uspis[spii]==spis].astype(float))))* \
+                                          (np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time)-np.exp(-2.0*(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time)) +
+                                          ((Nps[uspis[spii]==spis].astype(float))*(1.0+(1.0/ks[uspis[spii]==spis]))* \
+                                          (((1.0-np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time))/(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis]))**2.0)* \
+                                          (((mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])**2.0)*(SumEggsecondmom[spii] + \
+                                          SumEggvariance[spii])*(R0s[uspis[spii]==spis]**2.0)/(np.sum(Nps[uspis[spii]==spis].astype(float)))**2.0)) for spii in range(0,numclus)]
 
-                ensmean = [(Nps[uspis[spii]==spis].astype(float)*Ms0[uspis[spii]==spis]* \
-                           np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time)) + Integrandmean[spii] for spii in range(0,numclus)]
-                ensvariance = [ensmean[spii] + Integrandsecondmom[spii] - np.sum(Nps[uspis[spii]==spis].astype(float)*(Ms[uspis[spii]==spis]**2.0)) for spii in range(0,numclus)]
+                    ensmean = [(Nps[uspis[spii]==spis].astype(float)*Ms0[uspis[spii]==spis]* \
+                               np.exp(-(mus[uspis[spii]==spis]+mu1s[uspis[spii]==spis])*time)) + Integrandmean[spii] for spii in range(0,numclus)]
+                    ensvariance = [ensmean[spii] + Integrandsecondmom[spii] - np.sum(Nps[uspis[spii]==spis].astype(float)*(Ms[uspis[spii]==spis]**2.0)) for spii in range(0,numclus)]
+
+                    # Compute the normalised ensemble mean and ensemble variance in the mean worm burden per cluster using the inhomogenous Poisson solutions
+                    ensM_perclus_output = [np.sum(ensmean[spii])/np.sum(Nps[uspis[spii]==spis].astype(float)) for spii in range(0,numclus)]
+                    ensV_perclus_output = [np.sum(ensvariance[spii])/np.sum(Nps[uspis[spii]==spis].astype(float)**2.0) for spii in range(0,numclus)]
 
                 # Update with specified timestep
                 time += timestep
@@ -1401,16 +1410,21 @@ class helmpy:
                 # Count the number of steps performed in time
                 count_steps += 1
 
-                # Compute the normalised ensemble mean and ensemble variance in the mean worm burden per cluster using the inhomogenous Poisson solutions
-                ensM_perclus_output = [np.sum(ensmean[spii])/np.sum(Nps[uspis[spii]==spis].astype(float)) for spii in range(0,numclus)]
-                ensV_perclus_output = [np.sum(ensvariance[spii])/np.sum(Nps[uspis[spii]==spis].astype(float)**2.0) for spii in range(0,numclus)]
+                # If outputting the ensemble variance too then record the time, ensemble mean and ensemble variance in the mean worm burden per cluster in a list
+                if output_mean_groups == False: output_list = [time]+ensM_perclus_output+ensV_perclus_output
 
-                # Record the time, ensemble mean and ensemble variance in the mean worm burden per cluster in a list
-                output_list = [time]+ensM_perclus_output+ensV_perclus_output
+                # If just computing the mean values in each grouping then do so
+                if output_mean_groups == True: output_list = [time]+[Ms]+[FOIs]
+
                 output_data.append(output_list)
-                
-            # Output the data to a tab-delimited .txt file in the specified output directory     
-            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
+
+            # Unless specified then write to file
+            if just_a_function == False:        
+                # Output the data to a tab-delimited .txt file in the specified output directory     
+                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',output_data,delimiter='\t')
+
+            # If 'just_a_function' is specified then simply output full result as a function
+            if just_a_function == True: return output_data
 
 
     # Run the mean-field stochastic model while computing the ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region and outputting to file
