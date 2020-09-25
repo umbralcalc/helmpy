@@ -19,4 +19,4 @@ To fork, simply type into the terminal:
 
 > git clone https://github.com/umbralcalc/helmpy.git
 
-In the `/notebooks` directory there is an ipython notebook with a worked examples for easy implementation.
+In the `/notebooks` directory there is an ipython notebook with worked examples for easy implementation.
