@@ -16,7 +16,7 @@ class helmpy:
                  suppress_terminal_output=False      # Set this to 'True' to remove terminal messages
                  ):
 
-        self.helm_type = helm_type 
+        self.helm_type = helm_type
         self.path_to_helmpy_directory = path_to_helmpy_directory 
 
         self.helmpy_frontpage
@@ -30,6 +30,7 @@ class helmpy:
         self.treatment_times = None
         self.treatment_coverages = None
         self.compliance_params = None
+        self.data_samples = None
         self.migration_mode = False
         self.suppress_terminal_output = suppress_terminal_output
         self.drug_efficacy = 1.0
@@ -38,19 +39,7 @@ class helmpy:
         self.chains_directory = 'chains/' 
         self.output_directory = 'data/'
         self.plots_directory = 'plots/'
-        self.source_directory = 'source/'  
-
-        # Possible samples from data to compare simulations to
-        self.data_samples_list = []
-        self.data_samples_prevalences_list = []
-        self.data_samples_timepoints_list = [] 
-
-        # Set a false negative rate and threshold (integer) number of worms below which the this rate applies -
-        # this is for use only in prevalence-based inference (in conjunction with self.data_samples_prevalences_list)
-        self.FN_rate_and_thresh = [0.15,5] # Set default of 15% below 5 worms
-
-        # Internal sample size number used for prevalence summary statistic likelihood - shouldn't need changing beyond 1000 given a binomial
-        self.prev_data_sample_size = 1000
+        self.source_directory = 'source/' 
 
         if self.helm_type == 'STH':
             # Default is one grouping with the same parameters in cluster '1'
@@ -122,10 +111,8 @@ class helmpy:
 
         # Default is that parameters are not needed for simulation comparison to data
         self.default_data_specific_parameters = {
-                                                    'KatoKatz':      [],    # Optional choice of lambda_epg/24 (index 0 of list) for Kato-Katz egg count for STH or shisto mansoni data
-                                                    'UrineFil':      [],    # Optional choice of lambda_epml/24 (index 0 of list) for shisto haematobium data
-                                                    'qPCR':          [],    # Optional choice of parameters in qPCR data
-                                                    'tolerances':    [1.0]  # Optional choice to input a list of tolerances (variances) for Gaussian synthetic likelihood
+                                                    'KatoKatz':      [],    # Optional choice of lambda_epg/24 (index 0 of list) for Kato-Katz egg count for STH or schisto mansoni data
+                                                    'UrineFil':      [],    # Optional choice of lambda_epml/24 (index 0 of list) for schisto haematobium data
                                                  }
 
         self.parameter_dictionary = self.default_parameter_dictionary
@@ -295,6 +282,34 @@ class helmpy:
                 if self.helm_type == 'SCH': print('Schistosome mode enabled')
                 print('                                                    ')
                 print('Setting initial conditions...')
+
+            # If posterior samples have been generated from data, use a random uniform subsampling from these of a size set by the number of realisations 
+            if self.data_samples is not None:
+
+                # Find the number of samples
+                numsamps = self.data_samples.shape[0]
+
+                # Find the number of groupings
+                numgroups = len(Nps)
+
+                # Create the k array index labels to get samples in the correct grouping
+                spis_ilabs = np.asarray([np.arange(0,len(uspis),1)[spi==uspis][0] for spi in spis])
+
+                # Set full posterior sample sets for each parameter
+                M_samples = np.exp(self.data_samples[:,:numgroups])
+                R0_samples = np.exp(self.data_samples[:,numgroups:(2*numgroups)])
+                k_samples = np.exp(self.data_samples[:,(2*numgroups):(2*numgroups)+numclus])
+                k_groups_samples = k_samples[:,spis_ilabs]
+
+                # Set uniform random subsampling of the posterior to initialise the simulation with
+                randsamps_index = np.random.randint(0,numsamps,size=realisations)
+                self.posterior_samples['Msamps'] = M_samples[randsamps_index].T.tolist()
+                self.posterior_samples['R0samps'] = R0_samples[randsamps_index].T.tolist()
+                self.posterior_samples['ksamps'] = k_groups_samples[randsamps_index].T.tolist()
+
+                if self.suppress_terminal_output == False:
+                    print('                                                       ')
+                    print('Using ' + str(realisations) + ' posterior subsamples...')
 
             # Slow way to initialise a sampled pickup rate 'lambda', initial worm burden, initial worm uptake time and initial worm death time per individual per cluster
             for i in range(0,numclus):
@@ -875,103 +890,6 @@ class helmpy:
                     eliminated_realisations = np.all((ws_ind_perclus[i]==0.0),axis=0)
                     times_to_elimination[i][(first_passage[i]==0.0)*eliminated_realisations] = time
                     first_passage[i][eliminated_realisations] = 1.0
-
-                # If data has been fitted to then compare each simulation run to this and contribute to the total log likelihood for each cluster
-                if (len(self.data_samples_list) != 0 or len(self.data_samples_prevalences_list) != 0) and len(self.data_samples_timepoints_list) != 0:
-
-                    # Work out if this is the timepoint to contribute to the likelihood with data
-                    data_samples_ind = (old_time < np.asarray(self.data_samples_timepoints_list))*(np.asarray(self.data_samples_timepoints_list) <= time)
-                    if any(data_samples_ind) == True:
-
-                        if self.suppress_terminal_output == False:
-                            print('Computing the log likelihood for each realisation and tolerance at time t = ' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + \
-                                  ' years for cluster ' + str(uspis[i]))
-                            print('                                                                                             ')
-            
-                        # If Kato-Katz or urine filtration data are specified then compare using the corresponding log likelihood and output results
-                        if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
-                           (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
-                
-                            # The lambda_epg/24 value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
-                            if len(self.data_specific_parameters['KatoKatz']) > 0: lamepg = self.data_specific_parameters['KatoKatz'][0]
-
-                            # The lambda_epml/24 value used to map the mean egg counts from the simulation per ml of urine 
-                            if len(self.data_specific_parameters['UrineFil']) > 0: lamepml = self.data_specific_parameters['UrineFil'][0]
-
-                            # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
-                            tols = self.data_specific_parameters['tolerances']
-
-                            # Number of groupings in the cluster
-                            numgroup = len(Nps[spis==uspis[i]])
-
-                            # Compute the simulated worm and Kato-Katz egg mean for each grouping and realisation
-                            ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-                            gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-
-                            # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if STH
-                            if self.helm_type == 'STH':
-                                if len(self.data_samples_list) != 0:
-                                    simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
-                                if len(self.data_samples_prevalences_list) != 0:
-                                    simul_eggnum = [np.sum(((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j])>0.0)*\
-                                                           ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
-                                                           ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
-                                                           size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
-
-                            # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if schistosomiasis
-                            if self.helm_type == 'SCH':
-                                femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-
-                                # If mansoni then Kato-Katz
-                                if len(self.data_specific_parameters['KatoKatz']) > 0:
-                                    if len(self.data_samples_list) != 0:
-                                        simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                                for j in range(0,numgroup)]
-                                    if len(self.data_samples_prevalences_list) != 0:
-                                        simul_eggnum = [np.sum((lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
-                                                              ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
-                                                              ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
-                                                              size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
-
-                                # If haematobium then urine filtration
-                                if len(self.data_specific_parameters['UrineFil']) > 0:
-                                    if len(self.data_samples_list) != 0:
-                                        simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                                for j in range(0,numgroup)]
-                                    if len(self.data_samples_prevalences_list) != 0:
-                                        simul_eggnum = [np.sum((lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
-                                                              ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
-                                                              ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
-                                                              size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
-
-                            # Obtain the Kato-Katz egg mean values from the data samples or number of infected from prevalence data in each age bin at the appropriate timepoint
-                            if len(self.data_samples_list) != 0:
-                                datav_eggmeans = [self.data_samples_list[np.arange(0,len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][:,j] for j in range(0,numgroup)]
-                            if len(self.data_samples_prevalences_list) != 0:
-                                datav_eggnums = [np.random.binomial(Nps[spis==uspis[i]][j],self.data_samples_prevalences_list[np.arange(0,\
-                                                 len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][j],size=self.prev_data_sample_size) for j in range(0,numgroup)]
-
-                            # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
-                            log10varslike = np.log10(np.asarray(tols))
-
-                            # Compute the log likelihood of each realisation
-                            if len(self.data_samples_list) != 0:
-                                eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
-                                                       np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                                       np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
-
-                                # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
-                                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + \
-                                           '_timepoint_' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + '.txt',eggmean_lnlikelihood.T,delimiter='\t')
-   
-                            if len(self.data_samples_prevalences_list) != 0:
-                                eggnum_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggnums[j],np.ones_like(simul_eggnum[j]),axes=0)-\
-                                                      np.tensordot(np.ones_like(datav_eggnums[j]),simul_eggnum[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                                      np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
-
-                                # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory at the specified timepoint
-                                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + \
-                                           '_timepoint_' + str(np.asarray(self.data_samples_timepoints_list)[data_samples_ind==True][0]) + '.txt',eggnum_lnlikelihood.T,delimiter='\t')
         
             # Record the time, ensemble mean and ensemble variance as well as the upper and lower limits of the 68 confidence region in the mean worm burden per cluster in a list
             output_list = [time] + ensM_perclus_output + ensV_perclus_output + ensup68CL_perclus_output + enslw68CL_perclus_output
@@ -1017,7 +935,7 @@ class helmpy:
                         if self.suppress_terminal_output == False: print('Output snapshot of worm burdens at time t = ' + \
                            str(timepoints_snapshot[snapshot_time_ind==True][0]) + ' years for cluster ' + str(uspis[i]))        
 
-        if len(self.data_samples_list) == 0 and len(self.data_samples_prevalences_list) == 0 and self.suppress_terminal_output == False: print('\n')
+        if self.suppress_terminal_output == False: print('\n')
 
         # It treatment has been specified, output the post-last treatment realisations per cluster in specified file names
         if self.treatment_times is not None:
@@ -1046,103 +964,6 @@ class helmpy:
         # Output times to elimination in each cluster to a tab-delimited .txt file in the specified output directory, if specified
         if output_elim_time == True: 
             np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_times_to_elim.txt',np.asarray(times_to_elimination).T,delimiter='\t')
-
-        # If data has been fitted to then compare each simulation run to this and output the log likelihood of using each tolerance in a tab-delimited .txt file for each cluster
-        if len(self.data_samples_list) != 0 and len(self.data_samples_prevalences_list) != 0 and len(self.data_samples_timepoints_list) == 0:
-
-            if self.suppress_terminal_output == False:
-                print('Now computing and outputting the log likelihood for each realisation and tolerance...')
-                print('                                                                                             ')
-            
-            # If Kato-Katz or urine filtration data are specified then compare using the corresponding log likelihood and output results
-            if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
-               (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
-                
-                # The lambda_epg/24 value used to map the mean egg counts from the simulation to the Kato-Katz diagnostic
-                if len(self.data_specific_parameters['KatoKatz']) > 0: lamepg = self.data_specific_parameters['KatoKatz'][0]
-
-                # The lambda_epml/24 value used to map the mean egg counts from the simulation per ml of urine 
-                if len(self.data_specific_parameters['UrineFil']) > 0: lamepml = self.data_specific_parameters['UrineFil'][0]
-
-                # Set the list of tolerances (variances) for the Gaussian synthetic likelihood
-                tols = self.data_specific_parameters['tolerances']
-
-                # Loop over clusters
-                for i in range(0,numclus):	
-
-                    # Number of groupings in the cluster
-                    numgroup = len(Nps[spis==uspis[i]])
-
-                    # Compute the simulated worm and Kato-Katz egg mean for each grouping and realisation
-                    ws_age_binned = np.split(ws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-                    gams_age_binned = np.split(gams_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-
-                    # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if STH
-                    if self.helm_type == 'STH':
-                        if len(self.data_samples_list) != 0:
-                            simul_eggmean = [np.sum((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) for j in range(0,numgroup)]
-                        if len(self.data_samples_prevalences_list) != 0:
-                            simul_eggnum = [np.sum(((lamepg/2.0)*worm_to_egg_func(ws_age_binned[j],gams_age_binned[j])>0.0)*\
-                                                   ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
-                                                   ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
-                                                   size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
-
-                    # Compute the simulated sample mean egg count (for full Kato-Katz distribution inference) or number of non-zero egg counts (for prevalence inference) if schistosomiasis
-                    if self.helm_type == 'SCH':
-                        femws_age_binned = np.split(femws_ind_perclus[i].astype(float),np.cumsum(Nps[spis==uspis[i]][:len(Nps[spis==uspis[i]])]),axis=0)
-
-                        # If mansoni then Kato-Katz
-                        if len(self.data_specific_parameters['KatoKatz']) > 0:
-                            if len(self.data_samples_list) != 0:
-                                simul_eggmean = [np.sum(lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                        for j in range(0,numgroup)]
-                            if len(self.data_samples_prevalences_list) != 0:
-                                simul_eggnum = [np.sum((lamepg*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
-                                                      ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
-                                                      ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
-                                                      size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
-
-                        # If haematobium then urine filtration
-                        if len(self.data_specific_parameters['UrineFil']) > 0:
-                            if len(self.data_samples_list) != 0:
-                                simul_eggmean = [np.sum(lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j]),axis=0)/float(Nps[spis==uspis[i]][j]) \
-                                                        for j in range(0,numgroup)]
-                            if len(self.data_samples_prevalences_list) != 0:
-                                simul_eggnum = [np.sum((lamepml*worm_to_egg_func(ws_age_binned[j],femws_age_binned[j],gams_age_binned[j])>0.0)*\
-                                                      ((ws_age_binned[j]>self.FN_rate_and_thresh[1]) + \
-                                                      ((ws_age_binned[j]<=self.FN_rate_and_thresh[1])*np.random.binomial(1,1.0-self.FN_rate_and_thresh[0],\
-                                                      size=(Nps[spis==uspis[i]][j],realisations)))),axis=0) for j in range(0,numgroup)]
-
-                    # Obtain the Kato-Katz egg mean values from the data samples or number of infected from prevalence data in each age bin at the appropriate timepoint
-                    if len(self.data_samples_list) != 0:
-                        datav_eggmeans = [self.data_samples_list[np.arange(0,len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][:,j] for j in range(0,numgroup)]
-                    if len(self.data_samples_prevalences_list) != 0:
-                        datav_eggnums = [np.random.binomial(Nps[spis==uspis[i]][j],self.data_samples_prevalences_list[np.arange(0,\
-                                         len(self.data_samples_timepoints_list),1)[data_samples_ind][0]][j],size=self.prev_data_sample_size) for j in range(0,numgroup)]
-
-                    # Generate array of log variances for the Gaussian synthetic likelihood to marginalise over
-                    log10varslike = np.log10(np.asarray(tols))
-
-                    # Compute the log likelihood of each realisation
-                    if len(self.data_samples_list) != 0:
-                        eggmean_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggmeans[j],np.ones_like(simul_eggmean[j]),axes=0)-\
-                                               np.tensordot(np.ones_like(datav_eggmeans[j]),simul_eggmean[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                               np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1) 
-
-                        # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
-                        np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',\
-                                   eggmean_lnlikelihood.T,delimiter='\t')
-
-                    if len(self.data_samples_prevalences_list) != 0:
-                        eggnum_lnlikelihood = spec.logsumexp(np.asarray([np.sum(np.asarray([-0.5*((np.tensordot(datav_eggnums[j],np.ones_like(simul_eggnum[j]),axes=0)-\
-                                              np.tensordot(np.ones_like(datav_eggnums[j]),simul_eggnum[j],axes=0))**2.0)*(10.0**(-lv))-0.5*np.log(np.prod(2.0*np.pi*(10.0**(lv))))-\
-                                              np.log(float(len(log10varslike))) for j in range(0,numgroup)]),axis=0) for lv in log10varslike]),axis=1)
-
-                        # Output the log likelihood for each of the tolerances and realisations to a tab-delimited .txt file in the specified output directory
-                        np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '_likelihood_cluster_' + str(uspis[i]) + '.txt',\
-                                   eggnum_lnlikelihood.T,delimiter='\t')
-
-            if self.suppress_terminal_output == False: print('\n')
 
 
     # Define the mean-field worm sampler - draws stationary realisations of individual worm burdens from a cluster, stacked in age bins to match 
@@ -1653,14 +1474,16 @@ class helmpy:
     # Fit to data corresponding to the same structure as the input parameter dictionary/initial conditions 
     # and output the data to a text file using the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
     def fit_data(self,
-                 data,                         # Input the data in a list structure equivalent to the input parameter dictionary and initial conditions
-                 walker_initconds,             # Parameter initial conditions [centre,width] for the walkers in format - [[centre mean 1,width mean 1],...,[centre variance,width variance]]
-                 output_filename,              # Set a filename for the data to be output in self.output_directory
-                 output_corner_plot=True,      # Boolean for corner plot of the mean and variance posterior fits with: https://corner.readthedocs.io/en/latest/ - default is to output
-                 plot_labels=[],               # If corner plot is generated then this is an option to list a set of variable names (strings) in the same order as walker_initconds
-                 num_walkers=100,              # Change the number of walkers used by the ensemble MC sampler - default is 100 which works fine in most cases  
-                 num_iterations=500,           # Change the number of iterations used by the ensemble MC sampler - default is 500 which works fine in most cases
-                 timepoint=None                # Option to attribute a point in time to the data for the simulation to compare to - default assumes this occurs at the end
+                 data,                       # Input the data in a list structure equivalent to the input parameter dictionary and initial conditions
+                 walker_initconds,           # Parameter initial conditions [centre,width] for the walkers in format - [[centre 1,width 1],...,[centre n,width n]]
+                 output_filename,            # Set a filename for the data to be output in self.output_directory
+                 runtime=10.0,               # Change the total time of the run in years for deterministic mean field model to have run from the initial conditions before fitting
+                 timestep=0.02,              # Set a timestep to evolve the deterministic mean field model with
+                 output_corner_plot=True,    # Boolean for corner plot of the mean and variance posterior fits with: https://corner.readthedocs.io/en/latest/ - default is to output 
+                 plot_labels=[],             # If corner plot is generated then this is an option to list a set of variable names (strings) in the same order as walker_initconds
+                 num_walkers=100,            # Change the number of walkers used by the ensemble MC sampler - default is 100 which works fine in most cases  
+                 num_iterations=250,         # Change the number of iterations used by the ensemble MC sampler - default is 250 which works fine in most cases
+                 fit_summary=False,          # Option to obtain the posterior over the summary statistics of the data instead of over the helminth system parameters - default is False
                  ):
 
         # Terminal front page when code runs...
@@ -1669,14 +1492,23 @@ class helmpy:
         if self.suppress_terminal_output == False: print('Now generating posterior samples...')
 
         # If Kato-Katz data is specified for either STH or schistosomiasis (mansoni) or urine filtration for schistosomiasis (haematobium) then perform the corresponding fitting procedure
-        if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0 and len(self.data_specific_parameters['qPCR']) == 0) or \
-           (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0 and len(self.data_specific_parameters['qPCR']) == 0):
+        if (len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0) or \
+           (len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0):
 
             # Fix the dimensions for all of the groupings
             self.fix_groupings()
 
-            # Find the spatial indices to identify clusters
+            # Get the Kato-Katz lambda_epg/24 or Urine Filtration lambda_eml/24 parameter
+            if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0: lamd = self.data_specific_parameters['KatoKatz'][0]
+            if len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0: lamd = self.data_specific_parameters['UrineFil'][0]
+
+            # Find the spatial indices to identify clusters and set parameter values
             spis = np.asarray(self.parameter_dictionary['spi'])
+            mus = np.asarray(self.parameter_dictionary['mu'])
+            mu1s = np.asarray(self.parameter_dictionary['mu1'])
+            mu2s = np.asarray(self.parameter_dictionary['mu2'])
+            gams = np.asarray(self.parameter_dictionary['gam'])
+            zs = np.exp(-gams)
 
             # Find the number of data components and check to see if this matches the parameter dictionary lists in number
             numdat = len(data)
@@ -1686,11 +1518,12 @@ class helmpy:
                 print("ERROR! Please ensure at least the 'Np' list in the parameter dictionary matches the same number of components as the list of data...")
                 print('                              ')
 
-            # Find unique cluster references
+            # Find unique cluster references and create their array index labels
             uspis = np.unique(spis)
+            spis_ilabs = np.asarray([np.arange(0,len(uspis),1)[spi==uspis][0] for spi in spis])
 
             # Obtain the number of clusters
-            numclus = len(uspis)
+            numclus = len(uspis) 
 
             # Have to define a custom log negative binomial function because of definition ambiguities...
             def lognegbinom(n,mean,var):
@@ -1711,99 +1544,289 @@ class helmpy:
     
                 return sol
 
-            # Prepare log-likelihood for ensemble MC sampler
-            def loglike(params):
+            # Unless otherwise specified, this is the default setting where we obtain the posterior over the helminth system parameters. For STH and 
+            # SCH, with Kato-Katz or Urine Filtration the parameter space will be laid out in the following order for walker_initconds: 
+            # [log-mean worm burden group 1, ..., log-mean worm burden group n, log-R0 group 1, ..., log-R0 group n,
+            #  log-k parameter spatial index 1, ..., log-k parameter spatial index n, egg count diagnostic log-k parameter].
+            if fit_summary == False:
+
+                # Create mean worm burden generating function in time for an arbitrary number of age bins
+                def M_func(params):
     
-                # Identify parameters
-                mean = np.asarray(params)[:len(params)-1]
-                lnvar = np.asarray(params)[len(params)-1]
-                var = np.exp(lnvar)
- 
-                # Hard prior conditions to avoid inconsistent results
-                if len(mean) == 1:
-                    if mean < 0.0 or lnvar < np.log(mean):
-                        return -np.inf
-                    else:
-                        out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean,var)) for i in range(0,numdat)]))
+                    # Extract the posterior parameters
+                    lnM0s = params[:numdat]
+                    lnR0s = params[numdat:(2*numdat)]
+                    lnks = params[(2*numdat):(2*numdat)+numclus]
+                    lnkd = params[(2*numdat)+numclus]
+                    M0s = np.exp(lnM0s)
+                    R0s = np.exp(lnR0s)
+                    ks = np.exp(lnks)
+                    kd = np.exp(lnkd)
 
-                if len(mean) > 1:
-                    if any(m < 0.0 for m in mean) or any(lnvar < np.log(m) for m in mean):
-                        return -np.inf
-                    else:
-                        out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean[i],var)) for i in range(0,numdat)]))
-            
-                return out
+                    # Create k values for each grouping
+                    ksgroup = ks[spis_ilabs]   
 
-            # Generate the intial ensemble of walkers
-            init_ensemble = []
+                    self.parameter_dictionary['R0'] = R0s.tolist()           # Basic reproduction number within grouping
+                    self.parameter_dictionary['k'] = ksgroup.tolist()        # Inverse-clumping factor within grouping
+                    self.initial_conditions['M'] = M0s.tolist()              # Initial mean total worm burden within group
+    
+                    # Output endpoint M values
+                    return self.run_meanfield(runtime,timestep,'output',just_a_function=True,output_mean_groups=True)[-1][1]
 
-            # For means...
-            for i in range(0,numdat): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
+                # Prepare log-likelihood for ensemble MC sampler when there is only one grouping
+                if numdat == 1:
 
-            # For lnvar...    
-            init_ensemble.append(np.random.normal(walker_initconds[numdat][0],walker_initconds[numdat][1],size=num_walkers))
+                    # Define the log-likelihood function
+                    def loglike(params):
 
-            if self.suppress_terminal_output == False: 
-                print('                              ')
-                print('Running ensemble MC sampler...')
-                print('                              ')
+                        # Extract the posterior parameters
+                        lnM0 = params[0]
+                        lnR0 = params[1]
+                        lnk = params[2]
+                        lnkd = params[3]
+                        M0 = np.exp(lnM0)
+                        R0 = np.exp(lnR0)
+                        k = np.exp(lnk)
+                        kd = np.exp(lnkd)
+    
+                        # Specify sampling prior domain restrictions
+                        if (lnk > 5.0 or lnk < -10.0) or (lnR0 < -5.0 or lnR0 > 10.0) or (lnM0 > 5.0 or lnM0 < -10.0) or (lnkd > 5.0 or lnkd < -10.0):
+                            return -np.inf
+                        else:      
+                            # Run dynamics to get M values at the endpoint
+                            Mt = np.asarray(M_func(params))
 
-            # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
-            init_ensemble = np.asarray(init_ensemble).T
-            sampler = mc.EnsembleSampler(num_walkers, numdat+1, loglike)
-            sampler.run_mcmc(init_ensemble, num_iterations)
-            samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
+                            # If using STH then compute egg count mean in each grouping analytically
+                            if self.helm_type == 'STH': 
+                                Eggcountmean = (lamd/2.0)*Mt*(((1.0+((1.0-zs)*Mt/k))**(-k-1.0))-((1.0+((1.0-(zs/2.0))*Mt/k))**(-k-1.0)))
+
+                            # If using SCH then compute egg variance estimate with samples
+                            if self.helm_type == 'SCH':
+
+                                # Create matrices for rapid computation
+                                var = Mt + (Mt**2.0/k)
+                                Mt_matrix = np.tensordot(Mt,np.ones(1000),axes=0)
+                                var_matrix = np.tensordot(var,np.ones(1000),axes=0)
+                                zs_matrix = np.tensordot(zs,np.ones(1000),axes=0)
+
+                                # Estimate first egg moment with monogamous mating using samples (could also use integral of hypergeometric function) - not analytically tractable otherwise 
+                                totworms = np.random.negative_binomial(Mt_matrix**2.0/np.abs(var_matrix-Mt_matrix),Mt_matrix/var_matrix,size=(1,1000))
+                                femworms = np.random.binomial(totworms,0.5*np.ones((1,1000)),size=(1,1000))
+                                eggs = (totworms>0)*lamd*np.minimum(femworms,totworms-femworms).astype(float)*(zs_matrix**(totworms.astype(float)-1.0))
+
+                                # Sum over egg counts distribution moments and variances in each age bin
+                                Eggcountmean = np.sum(eggs,axis=1)/1000.0
         
-            # Find maximum likelihood parameters and print them to screen
-            lnlike_samples = sampler.get_log_prob()[50:, :].flatten()
-            maxlnlike = np.max(lnlike_samples)
-            maxlnlike_params = samples[np.argmax(lnlike_samples)]
-            print('Maxlnlike: ' + str(maxlnlike))
-            print('Maxlnlike parameters: ' + str(maxlnlike_params))
-            print('                                              ')
+                            # Sum over log-likelihood for the Kato-Katz data in each age bin 
+                            return np.sum(lognegbinom(data[0],Eggcountmean[0],Eggcountmean[0]+(Eggcountmean[0]**2.0/kd)))
 
-            # Set the data samples for comparison with simulations
-            self.data_samples_list.append(samples)
-            if timepoint is not None: self.data_samples_timepoints_list.append(timepoint)
+                # Prepare log-likelihood for ensemble MC sampler when there is more than one grouping
+                if numdat > 1:
 
-            # Save samples to text data file in self.output_directory
-            np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
+                    # Define the log-likelihood function
+                    def loglike(params):
 
-            # If corner plot has been specified then generate this with: https://getdist.readthedocs.io/en/latest/
-            if output_corner_plot == True: 
+                        # Extract the posterior parameters
+                        lnM0s = params[:numdat]
+                        lnR0s = params[numdat:(2*numdat)]
+                        lnks = params[(2*numdat):(2*numdat)+numclus]
+                        lnkd = params[(2*numdat)+numclus]
+                        M0s = np.exp(lnM0s)
+                        R0s = np.exp(lnR0s)
+                        ks = np.exp(lnks)
+                        kd = np.exp(lnkd)    
+
+                        # Create k values for each grouping
+                        ksgroup = ks[spis_ilabs]
+    
+                        # Specify sampling prior domain restrictions
+                        if any((lk > 5.0 or lk < -10.0) for lk in lnks) or any((lr < -5.0 or lr > 10.0) for lr in lnR0s) or \
+                           any((lm > 5.0 or lm < -10.0) for lm in lnM0s) or (lnkd > 5.0 or lnkd < -10.0):
+                            return -np.inf
+                        else:      
+                            # Run dynamics to get M values at the endpoint
+                            Mts = np.asarray(M_func(params))
+
+                            # If using STH then compute egg count mean in each grouping analytically
+                            if self.helm_type == 'STH':
+                                Eggcountmean = (lamd/2.0)*Mts*(((1.0+((1.0-zs)*Mts/ksgroup))**(-ksgroup-1.0))-((1.0+((1.0-(zs/2.0))*Mts/ksgroup))**(-ksgroup-1.0)))
+
+                            # If using SCH then compute egg variance estimate with samples
+                            if self.helm_type == 'SCH':
+
+                                # Create matrices for rapid computation
+                                var = Mts + (Mts**2.0/ksgroup)
+                                Mts_matrix = np.tensordot(Mts,np.ones(1000),axes=0)
+                                var_matrix = np.tensordot(var,np.ones(1000),axes=0)
+                                zs_matrix = np.tensordot(zs,np.ones(1000),axes=0)
+
+                                # Estimate first egg moment with monogamous mating using samples (could also use integral of hypergeometric function) - not analytically tractable otherwise 
+                                totworms = np.random.negative_binomial(Mts_matrix**2.0/np.abs(var_matrix-Mts_matrix),Mts_matrix/var_matrix,size=(numdat,1000))
+                                femworms = np.random.binomial(totworms,0.5*np.ones((numdat,1000)),size=(numdat,1000))
+                                eggs = (totworms>0)*lamd*np.minimum(femworms,totworms-femworms).astype(float)*(zs_matrix**(totworms.astype(float)-1.0))
+
+                                # Sum over egg counts distribution moments and variances in each age bin
+                                Eggcountmean = np.sum(eggs,axis=1)/1000.0
+        
+                            # Sum over log-likelihood for the Kato-Katz data in each age bin 
+                            return sum([np.sum(lognegbinom(data[si],Eggcountmean[si],Eggcountmean[si]+(Eggcountmean[si]**2.0/kd))) for si in range(0,numdat)])
+
+                # Generate the initial ensemble of walkers
+                init_ensemble = []
+
+                # Set the walker initial conditions
+                for i in range(0,(2*numdat)+numclus+1): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
+
+                if self.suppress_terminal_output == False: 
+                    print('                              ')
+                    print('Running ensemble MC sampler...')
+                    print('                              ')
+
+                # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
+                init_ensemble = np.asarray(init_ensemble).T
+                sampler = mc.EnsembleSampler(num_walkers, (2*numdat)+numclus+1, loglike)
+                sampler.run_mcmc(init_ensemble, num_iterations, progress=True)
+                samples = sampler.chain[:, 50:, :].reshape((-1, (2*numdat)+numclus+1))
+        
+                # Find maximum likelihood parameters and print them to screen
+                lnlike_samples = sampler.get_log_prob()[50:, :].flatten()
+                maxlnlike = np.max(lnlike_samples)
+                maxlnlike_params = samples[np.argmax(lnlike_samples)]
+                print('Maxlnlike: ' + str(maxlnlike))
+                print('Maxlnlike parameters: ' + str(maxlnlike_params))
+                print('                                              ')
+
+                # Store posterior samples in the class to run simulations from
+                self.data_samples = samples
+
+                # Save samples to text data file in self.output_directory
+                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
+
+                # If corner plot has been specified then generate this with: https://getdist.readthedocs.io/en/latest/
+                if output_corner_plot == True: 
                 
-                # Set arbitrary name labels for GetDist
-                name_labels = []     
-                
+                    # Set arbitrary name labels for GetDist
+                    name_labels = []     
+                    for i in range(0,(2*numdat)+numclus+1): name_labels.append('par' + str(i))
+
+                    # Generate the appropriate plot labels if not already specified
+                    if len(plot_labels) == 0:
+
+                        # Set the parameter plot labels which can be overwritten
+                        for i in range(0,numdat): plot_labels.append("lnM(" + str(spis[i]) + ")")
+                        for i in range(numdat,(2*numdat)): plot_labels.append("lnR0(" + str(spis[i-numdat]) + ")")
+                        for i in range((2*numdat),(2*numdat)+numclus): plot_labels.append("lnk(" + str(uspis[i-(2*numdat)]) + ")")
+                        plot_labels.append("lnkd")
+
+                    # Initialise GetDist MC samples
+                    gd_samples = MCSamples(samples=samples,names=name_labels,labels=plot_labels) 
+
+                    # Set fontsize settings
+                    g = plots.get_subplot_plotter()
+                    g.settings.legend_fontsize=15
+                    g.settings.axes_fontsize=15
+                    g.settings.lab_fontsize=15
+
+                    # Generate corner plot
+                    g.triangle_plot(gd_samples, filled=True)
+
+                    # Output figure to plots directory
+                    plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
+
+            # If specified, obtain the posterior over the summary statistics of the data instead of over the helminth system parameters. For Kato-Katz or 
+            # Urine Filtration the parameter space will be laid out in the following order for walker_initconds: 
+            # [log-mean egg count group 1, ..., log-mean egg count group n, egg count diagnostic log-variance].
+            if fit_summary == True:
+
+                # Prepare log-likelihood for ensemble MC sampler
+                def loglike(params):
+    
+                    # Identify parameters
+                    mean = np.asarray(params)[:len(params)-1]
+                    lnvar = np.asarray(params)[len(params)-1]
+                    var = np.exp(lnvar)
+ 
+                    # Hard prior conditions to avoid inconsistent results
+                    if len(mean) == 1:
+                        if mean < 0.0 or lnvar < np.log(mean):
+                            return -np.inf
+                        else:
+                            out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean,var)) for i in range(0,numdat)]))
+
+                    if len(mean) > 1:
+                        if any(m < 0.0 for m in mean) or any(lnvar < np.log(m) for m in mean):
+                            return -np.inf
+                        else:
+                            out = np.sum(np.asarray([np.sum(lognegbinom(data[i],mean[i],var)) for i in range(0,numdat)]))
+            
+                    return out
+
+                # Generate the initial ensemble of walkers
+                init_ensemble = []
+
                 # For means...
-                for i in range(0,numdat): name_labels.append('m' + str(i))
+                for i in range(0,numdat): init_ensemble.append(np.random.normal(walker_initconds[i][0],walker_initconds[i][1],size=num_walkers))
+
+                # For lnvar...    
+                init_ensemble.append(np.random.normal(walker_initconds[numdat][0],walker_initconds[numdat][1],size=num_walkers))
+
+                if self.suppress_terminal_output == False: 
+                    print('                              ')
+                    print('Running ensemble MC sampler...')
+                    print('                              ')
+
+                # Run the ensemble MC sampler from: https://emcee.readthedocs.io/en/stable/
+                init_ensemble = np.asarray(init_ensemble).T
+                sampler = mc.EnsembleSampler(num_walkers, numdat+1, loglike)
+                sampler.run_mcmc(init_ensemble, num_iterations, progress=True)
+                samples = sampler.chain[:, 50:, :].reshape((-1, numdat+1))
+        
+                # Find maximum likelihood parameters and print them to screen
+                lnlike_samples = sampler.get_log_prob()[50:, :].flatten()
+                maxlnlike = np.max(lnlike_samples)
+                maxlnlike_params = samples[np.argmax(lnlike_samples)]
+                print('Maxlnlike: ' + str(maxlnlike))
+                print('Maxlnlike parameters: ' + str(maxlnlike_params))
+                print('                                              ')
+
+                # Save samples to text data file in self.output_directory
+                np.savetxt(self.path_to_helmpy_directory + '/' + self.output_directory + output_filename + '.txt',samples,delimiter='\t')
+
+                # If corner plot has been specified then generate this with: https://getdist.readthedocs.io/en/latest/
+                if output_corner_plot == True: 
                 
-                # For lnvar...
-                name_labels.append('v')
-
-                # Generate the appropriate plot labels if not already specified
-                if len(plot_labels) == 0:
-
+                    # Set arbitrary name labels for GetDist
+                    name_labels = []     
+                
                     # For means...
-                    for i in range(0,numdat): plot_labels.append("Mean(" + str(spis[i]) + ")")
+                    for i in range(0,numdat): name_labels.append('m' + str(i))
+                
+                    # For lnvar...
+                    name_labels.append('v')
 
-                    # For lnvar... 
-                    plot_labels.append("ln-Variance")
+                    # Generate the appropriate plot labels if not already specified
+                    if len(plot_labels) == 0:
 
-                # Initialise GetDist MC samples
-                gd_samples = MCSamples(samples=samples,names=name_labels,labels=plot_labels) 
+                        # For means...
+                        for i in range(0,numdat): plot_labels.append("EggMean(" + str(spis[i]) + ")")
 
-                # Set fontsize settings
-                g = plots.get_subplot_plotter()
-                g.settings.legend_fontsize=15
-                g.settings.axes_fontsize=15
-                g.settings.lab_fontsize=15
+                        # For lnvar... 
+                        plot_labels.append("ln-EggVariance")
 
-                # Generate corner plot
-                g.triangle_plot(gd_samples, filled=True)
+                    # Initialise GetDist MC samples
+                    gd_samples = MCSamples(samples=samples,names=name_labels,labels=plot_labels) 
 
-                # Output figure to plots directory
-                plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
+                    # Set fontsize settings
+                    g = plots.get_subplot_plotter()
+                    g.settings.legend_fontsize=15
+                    g.settings.axes_fontsize=15
+                    g.settings.lab_fontsize=15
+
+                    # Generate corner plot
+                    g.triangle_plot(gd_samples, filled=True)
+
+                    # Output figure to plots directory
+                    plt.savefig(self.path_to_helmpy_directory + '/' + self.plots_directory + output_filename + '.pdf',format='pdf',dpi=500)
 
 
     # Just some front page propaganda...
