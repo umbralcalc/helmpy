@@ -111,8 +111,8 @@ class helmpy:
 
         # Default is that parameters are not needed for simulation comparison to data
         self.default_data_specific_parameters = {
-                                                    'KatoKatz':      [],    # Optional choice of lambda_epg/24 (index 0 of list) for Kato-Katz egg count for STH or schisto mansoni data
-                                                    'UrineFil':      [],    # Optional choice of lambda_epml/24 (index 0 of list) for schisto haematobium data
+                                                    'KatoKatz':      [],    # Optional choice of lambda_d (index 0 of list) for Kato-Katz egg count for STH or schisto mansoni data
+                                                    'UrineFil':      [],    # Optional choice of lambda_d (index 0 of list) for schisto haematobium data
                                                  }
 
         self.parameter_dictionary = self.default_parameter_dictionary
@@ -1498,7 +1498,7 @@ class helmpy:
             # Fix the dimensions for all of the groupings
             self.fix_groupings()
 
-            # Get the Kato-Katz lambda_epg/24 or Urine Filtration lambda_eml/24 parameter
+            # Get the Kato-Katz lambda_d or Urine Filtration lambda_d parameter
             if len(self.data_specific_parameters['KatoKatz']) > 0 and len(self.data_specific_parameters['UrineFil']) == 0: lamd = self.data_specific_parameters['KatoKatz'][0]
             if len(self.data_specific_parameters['KatoKatz']) == 0 and len(self.data_specific_parameters['UrineFil']) > 0: lamd = self.data_specific_parameters['UrineFil'][0]
 
