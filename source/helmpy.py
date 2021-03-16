@@ -43,34 +43,34 @@ class helmpy:
         if self.helm_type == "STH":
             # Default is one grouping with the same parameters in cluster '1'
             self.default_parameter_dictionary = {
-                "mu": [1.0 / 70.0],  # Human death rate (per year)
-                "mu1": [0.5],  # Adult worm death rate (per year)
-                "mu2": [26.0],  # Reservoir (eggs and larvae) death rate (per year)
-                "R0": [2.5],  # Basic reproduction number within grouping
-                "k": [0.3],  # Inverse-clumping factor within grouping
-                "gam": [
-                    0.08
-                ],  # Density dependent fecundity power-law scaling z = exp(-gam)
-                "Np": [100],  # Number of people within grouping
-                "spi": [
-                    1
-                ],  # Spatial index number of grouping - modify this only if varying spatially in clusters
-                "r+": [
-                    0.0
-                ],  # Migration i x i matrix - the migration rate in from each of the i clusters (per year)
-                "r-": [
-                    0.0
-                ],  # Migration i x i matrix - the migration rate out to each of the i clusters (per year)
-                "Nm": [
-                    1
-                ],  # Migrant number per event (global parameter) - must be integer - default is 1
-                "brat": [],  # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
-                "Na": [
-                    1
-                ],  # Number of people ageing per event (global parameter) - must be integer - default is 1
-                "ari": [
-                    0
-                ],  # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
+                # Human death rate (per year)
+                "mu": [1.0 / 70.0],
+                # Adult worm death rate (per year)
+                "mu1": [0.5],
+                # Reservoir (eggs and larvae) death rate (per year)
+                "mu2": [26.0],
+                # Basic reproduction number within grouping
+                "R0": [2.5],
+                # Inverse-clumping factor within grouping
+                "k": [0.3],
+                # Density dependent fecundity power-law scaling z = exp(-gam)
+                "gam": [0.08],
+                # Number of people within grouping
+                "Np": [100],
+                # Spatial index number of grouping - modify this only if varying spatially in clusters
+                "spi": [1],
+                # Migration i x i matrix - the migration rate in from each of the i clusters (per year)
+                "r+": [0.0],
+                # Migration i x i matrix - the migration rate out to each of the i clusters (per year)
+                "r-": [0.0],
+                # Migrant number per event (global parameter) - must be integer - default is 1
+                "Nm": [1],
+                # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
+                "brat": [],
+                # Number of people ageing per event (global parameter) - must be integer - default is 1
+                "Na": [1],
+                # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
+                "ari": [0],
             }
             # Default is one grouping with the same initial conditions in cluster '1'
             self.default_initial_conditions = {
@@ -91,34 +91,34 @@ class helmpy:
         if self.helm_type == "SCH":
             # Default is one grouping with the same parameters in cluster '1'
             self.default_parameter_dictionary = {
-                "mu": [1.0 / 70.0],  # Human death rate (per year)
-                "mu1": [1.0 / 5.0],  # Adult worm death rate (per year)
-                "mu2": [5.0],  # Reservoir (free-living larvae) death rate (per year)
-                "R0": [3.5],  # Basic reproduction number within grouping
-                "k": [0.3],  # Inverse-clumping factor within grouping
-                "gam": [
-                    0.01
-                ],  # Density dependent fecundity power-law scaling z = exp(-gam)
-                "Np": [100],  # Number of people within grouping
-                "spi": [
-                    1
-                ],  # Spatial index number of grouping - modify this only if varying spatially in clusters
-                "r+": [
-                    0.0
-                ],  # Migration i x i matrix - the migration rate in from each of the i clusters (per year)
-                "r-": [
-                    0.0
-                ],  # Migration i x i matrix - the migration rate out to each of the i clusters (per year)
-                "Nm": [
-                    1
-                ],  # Migrant number per event (global parameter) - must be integer - default is 1
-                "brat": [],  # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
-                "Na": [
-                    1
-                ],  # Number of people ageing per event (global parameter) - must be integer - default is 1
-                "ari": [
-                    0
-                ],  # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
+                # Human death rate (per year)
+                "mu": [1.0 / 70.0],
+                # Adult worm death rate (per year)
+                "mu1": [1.0 / 5.0],
+                # Reservoir (free-living larvae) death rate (per year)
+                "mu2": [5.0],
+                # Basic reproduction number within grouping
+                "R0": [3.5],
+                # Inverse-clumping factor within grouping
+                "k": [0.3],
+                # Density dependent fecundity power-law scaling z = exp(-gam)
+                "gam": [0.01],
+                # Number of people within grouping
+                "Np": [100],
+                # Spatial index number of grouping - modify this only if varying spatially in clusters
+                "spi": [1],
+                # Migration i x i matrix - the migration rate in from each of the i clusters (per year)
+                "r+": [0.0],
+                # Migration i x i matrix - the migration rate out to each of the i clusters (per year)
+                "r-": [0.0],
+                # Migrant number per event (global parameter) - must be integer - default is 1
+                "Nm": [1],
+                # The birth rate (per year) into grouping 1 of each cluster - if blank no ageing is used
+                "brat": [],
+                # Number of people ageing per event (global parameter) - must be integer - default is 1
+                "Na": [1],
+                # Group age-ordering index - 0,1,2,3,... increasing with age where 0 is aged into - default is 0 in every group
+                "ari": [0],
             }
             # Default is one grouping with the same initial conditions in cluster '1'
             self.default_initial_conditions = {
@@ -190,8 +190,8 @@ class helmpy:
         treatment_times,  # Input a list of treatment times for all clusters and the code will match to the nearest Poisson timesteps
         treatment_coverages=None,  # Input a list of lists matching the chosen groupings which give the effective coverage fraction in each age bin and clusters
         compliance_params=None,  # OR - Input a list of lists twice the length above, giving: alpha = Pr(treated this round | treated last round) and
-        #      beta = Pr(treated this round | NOT treated last round) parameter choices for the systematic non-compliance pattern in
-        #      the Markovian model - Note also that first round alpha entry is just the initial coverage probability
+        # beta = Pr(treated this round | NOT treated last round) parameter choices for the systematic non-compliance pattern in
+        # the Markovian model - Note also that first round alpha entry is just the initial coverage probability
         drug_efficacy=1.0,  # Optional mean fraction of worms killed when treated - default is perfect efficacy
     ):
 
