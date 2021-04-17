@@ -11,7 +11,7 @@ An all-in-one python class for forecasting which includes features for
 5. fitting summary parameters to datasets,
 6. and generating posterior predictions based on these datasets 
 
-for helminth (parasitic worm) disease transmission with variable population sizes. The mathematics of the model are described here: https://doi.org/10.1101/2019.12.17.19013490
+for helminth (parasitic worm) disease transmission with variable population sizes. The mathematics of the model are described in [Hardwick et al. (2021)](https://www.sciencedirect.com/science/article/pii/S1755436521000013?via%3Dihub).
 
 The code runs with an optimised stochastic simulation method where best results can be attained through only a minimal (typically ~10, depending on the overall population number) number of repeat runs.
 
