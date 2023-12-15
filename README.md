@@ -1,6 +1,4 @@
-# helmpy - individual-based simulation of helminth transmission in a human population  
-
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4703971.svg)](https://doi.org/10.5281/zenodo.4703971)
+# helmpy - individual-based simulation of helminth transmission in a human population
 
 An all-in-one python class for forecasting which includes features for
 
